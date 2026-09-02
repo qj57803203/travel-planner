@@ -12,6 +12,11 @@ venv/
 node_modules/
 dist/
 
+# TypeScript build artifacts
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
 # IDE
 .vscode/
 .idea/

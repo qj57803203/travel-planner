@@ -9,7 +9,7 @@
 | 前端 | Vue 3 + Vite + TypeScript + Element Plus + Pinia + Axios |
 | 后端 | Python + FastAPI + Pydantic + SQLAlchemy |
 | Agent 编排 | LangChain + LangGraph（抽取 → 搜集 → 生成三步 DAG） |
-| LLM | DeepSeek（`deepseek-chat`） |
+| LLM | DeepSeek（`deepseek-v4-flash`） |
 | 存储 | SQLite（`backend/trips.db`，启动时自动建表） |
 | 数据源 | 预置固定示例数据（东京 / 大阪 / 巴黎），MVP 阶段无真实抓取 |
 
@@ -111,7 +111,7 @@ user_input ──[extract]──▶ preferences ──[research]──▶ resear
 ## 后端关键文件
 
 - `main.py`：创建 FastAPI 实例，`Base.metadata.create_all()` 启动建表，配置 CORS（只放行 5173），挂载 `trips.router`，`/health` 健康检查。
-- `config.py`：`Settings` 从 `.env` 读 `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL` / `DATABASE_URL`，默认 `deepseek-chat` 和 `sqlite:///./trips.db`。
+- `config.py`：`Settings` 从 `.env` 读 `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL` / `DATABASE_URL`，默认 `deepseek-v4-flash` 和 `sqlite:///./trips.db`。
 - `database.py`：SQLite 需要 `check_same_thread=False` 才能在 FastAPI 线程池复用；`get_db()` 是请求级会话依赖。
 - `models.py`：`Trip` 表，`preferences`/`research` 用 JSON 列，`itinerary` 用 Text，`created_at` 默认 `datetime.utcnow`。
 - `nodes.py`：`_parse_json()` 容忍 markdown 代码块和多余说明，稳健解析 LLM 输出的 JSON；`_get_llm()` 统一创建 DeepSeek 实例。
@@ -163,3 +163,21 @@ npm run dev    # http://localhost:5173，/api 已代理到 8000
 - **数据源是静态兜底**：MVP 阶段目的地只有东京/大阪/巴黎三个，`research` 找不到就返回空素材，`plan` 仍会基于空素材尽力生成。
 - 若后端未启动，前端 error 会提示「生成失败，请检查后端服务是否启动」，问题多半在后端 8000 端口没起来。
 - 环境变量缺失（未配 `DEEPSEEK_API_KEY`）会导致 extract/plan 节点失败，但流程会走兜底继续返回结果，注意别把「成功返回」误当成「LLM 正常工作了」。
+
+## 提交到 GitHub
+
+仓库：<https://github.com/qj57803203/travel-planner> （`origin`，分支 `main`）。git 身份已配置为 `qinjie` / `qj57803203@gmail.com`，首次提交已推送完成。
+
+后续改动提交三步：
+
+```bash
+cd "d:/项目/旅游攻略"
+git add .
+git commit -m "改了什么"
+git push
+```
+
+注意点：
+
+- `.env`（含 `DEEPSEEK_API_KEY`）、`*.db`（含 `-wal`/`-shm`）、`node_modules/`、`.venv/`、`__pycache__/` 等已写入 `.gitignore`，**真实 API Key 绝不能提交**，只提交 `.env.example` 模板。
+- 首次 push 走 HTTPS + Git Credential Manager，凭证已缓存，之后 push 无需重复登录。

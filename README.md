@@ -9,7 +9,7 @@
 | 前端 | Vue 3 + Vite + TypeScript + Element Plus + Pinia + Axios |
 | 后端 | Python + FastAPI + Pydantic + SQLAlchemy |
 | Agent | LangChain + LangGraph（编排抽取 → 搜集 → 生成三步） |
-| LLM | DeepSeek（`deepseek-chat`） |
+| LLM | DeepSeek（`deepseek-v4-flash`） |
 | 存储 | SQLite |
 | 数据源 | 预置固定示例数据（东京 / 大阪 / 巴黎） |
 
