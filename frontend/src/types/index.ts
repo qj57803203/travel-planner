@@ -47,6 +47,13 @@ export interface ResearchInfo {
   food: Food[]
   transport: Transport[]
   xhs_notes: XhsNote[]
+  xhs_status: string
+  xhs_error: string
+}
+
+export interface TokenUsage {
+  input: number
+  output: number
 }
 
 export interface Trip {
@@ -56,6 +63,7 @@ export interface Trip {
   research: ResearchInfo
   itinerary: string
   created_at: string
+  usage?: { extract?: TokenUsage; plan?: TokenUsage }
 }
 
 export interface TripSummary {

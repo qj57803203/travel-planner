@@ -16,6 +16,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+logging.basicConfig(level=logging.INFO)
+# 静音第三方库的噪音 INFO 日志（httpx 请求记录、mcp 的 SSE 重连提示）
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("mcp").setLevel(logging.WARNING)
 from collections.abc import Callable
 
 from app.config import settings
@@ -35,6 +39,18 @@ def _https(url: str) -> str:
     if url and url.startswith("http://"):
         return "https://" + url[len("http://"):]
     return url
+
+
+def _err_text(e: BaseException) -> str:
+    """穿透 anyio 的 ExceptionGroup/TaskGroup，取最底层异常的「类型: 消息」。
+
+    连接失败时 mcp 的 streamable_http 会把 httpx.ConnectError 包进 ExceptionGroup，
+    直接 str(e) 只会得到「unhandled errors in a TaskGroup」，这里递归取子异常还原真实原因。
+    """
+    subs = getattr(e, "exceptions", None)
+    if subs:
+        return _err_text(subs[0])
+    return f"{type(e).__name__}: {e}"
 
 
 # ---------- 纯解析（可离线测） ----------
@@ -135,23 +151,25 @@ async def _call_tool(tool: str, args: dict) -> str:
     return await asyncio.wait_for(_inner(), timeout=settings.xhs_mcp_timeout_s)
 
 
-async def search_notes(keyword: str) -> list[dict]:
-    """搜笔记 → [{feed_id, xsec_token, title, cover}]；未启用/失败返回 []。
+async def search_notes(keyword: str) -> tuple[list[dict], str]:
+    """搜笔记 → ([{feed_id, xsec_token, title, cover}], 错误信息)；失败返回 ([], 原因)。
 
     搜索是整条链路的网关（失败 = 这轮小红书全军覆没，回退预置数据），冷加载偶发超时——重试一次。
     """
     if not enabled():
-        return []
+        return [], ""
     logger.info("开始搜索小红书：%s", keyword)
+    last_err = ""
     for attempt in range(2):
         try:
             feeds = _parse_feeds(await _call_tool("search_feeds", {"keyword": keyword}))
             logger.info("小红书搜索完成，返回 %d 篇笔记", len(feeds))
-            return feeds
-        except Exception:  # noqa: BLE001 — 超时/未登录/服务挂了都静默降级
-            logger.warning("小红书搜索失败（第 %d 次重试）：%s", attempt + 1, keyword,
-                           exc_info=attempt == 1)
-    return []
+            return feeds, ""
+        except Exception as e:  # noqa: BLE001 — 超时/未登录/服务挂了都降级，但把原因带出去
+            last_err = _err_text(e)
+            logger.warning("小红书搜索失败（第 %d 次重试）：%s %s", attempt + 1, keyword,
+                           last_err, exc_info=attempt == 1)
+    return [], last_err
 
 
 async def note_detail(feed_id: str, xsec_token: str) -> dict | None:
@@ -174,31 +192,34 @@ async def collect_xhs_sources(
     query: str,
     limit: int | None = None,
     on_note: NoteCallback | None = None,
-) -> list[dict]:
-    """搜索 + 取前 N 篇详情，组装成攻略素材 [{title, url, summary, cover}]；未启用/失败返回 []。
+) -> tuple[list[dict], str]:
+    """搜索 + 取前 N 篇详情，组装成攻略素材 ([{title, url, summary, cover}], 错误信息)。
 
     - 详情串行取（MCP 后端是单浏览器会话，并发反而互相拖慢），每篇约 20s；
     - 整轮总预算 = xhs_collect_timeout_s，超时**交回已抓到的**（部分收成），不回退全丢；
     - 连续 2 次详情失败 → 熔断，快速放弃（否则每篇都等超时，纯浪费等待）。
     - on_note(已抓到篇数, note)：每采纳入库一篇就回调一次，供上层推送到前端。
+    - 第二元素为错误信息（空串=无错误），整轮失败/降级时非空，交给上层透传给前端。
     """
     if not enabled():
-        return []
+        return [], ""
 
     logger.info("开始采集小红书笔记：%s", query)
     sink: list[dict] = []
+    error = ""
     try:
-        await asyncio.wait_for(
+        error = await asyncio.wait_for(
             _collect_within_budget(query, limit, sink, on_note),
             timeout=settings.xhs_collect_timeout_s,
         )
     except asyncio.TimeoutError:
+        error = f"采集超时（>{settings.xhs_collect_timeout_s:.0f}s）"
         logger.warning(
             "小红书采集超预算（%.0f 秒），已抓到 %d 篇，超时部分收成（不再继续等）",
             settings.xhs_collect_timeout_s, len(sink),
         )
     logger.info("小红书采集结束，共 %d 篇有效笔记", len(sink))
-    return sink
+    return sink, error
 
 
 async def _collect_within_budget(
@@ -206,10 +227,15 @@ async def _collect_within_budget(
     limit: int | None,
     out: list[dict],
     on_note: NoteCallback | None,
-) -> list[dict]:
-    """`out` 由调用方传入：预算超时时外层直接拿走已追加的部分（部分收成）。"""
+) -> str:
+    """`out` 由调用方传入：预算超时时外层直接拿走已追加的部分（部分收成）。
+
+    返回错误信息（空串=无错误）：搜索失败把网关错误直接带回；详情熔断且一无所获时给简短提示。
+    """
     n = limit or settings.xhs_notes_per_turn
-    feeds = await search_notes(query)
+    feeds, search_err = await search_notes(query)
+    if search_err:
+        return search_err
     attempts = 0
     consecutive_failures = 0
     for f in feeds:
@@ -223,7 +249,7 @@ async def _collect_within_budget(
             consecutive_failures += 1
             if consecutive_failures >= 2:
                 logger.warning("  连续 %d 次失败，熔断停止（小红书可能异常）", consecutive_failures)
-                break
+                return "" if out else "详情连续失败，已熔断"
             continue
         consecutive_failures = 0
         if len(det["desc"]) < 100:  # 太短的笔记（纯图/广告位）不当来源，但不计故障
@@ -242,19 +268,19 @@ async def _collect_within_budget(
                 on_note(len(out), note)
             except Exception:  # noqa: BLE001 — 进度回调绝不能影响采集
                 pass
-    return out
+    return ""
 
 
 def collect_xhs_sources_sync(
     query: str,
     limit: int | None = None,
     on_note: NoteCallback | None = None,
-) -> list[dict]:
+) -> tuple[list[dict], str]:
     """同步包装：供 LangGraph 的同步节点在 FastAPI 线程池里直接调用。"""
     if not enabled():
-        return []
+        return [], ""
     try:
         return asyncio.run(collect_xhs_sources(query, limit, on_note))
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
         logger.warning("小红书采集同步调用失败：%s", query, exc_info=True)
-        return []
+        return [], _err_text(e)

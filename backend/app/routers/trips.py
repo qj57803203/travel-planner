@@ -33,6 +33,7 @@ def _to_response(trip: Trip) -> TripResponse:
         research=trip.research,
         itinerary=trip.itinerary,
         created_at=trip.created_at.isoformat(),
+        usage=trip.usage or {},
     )
 
 
@@ -48,6 +49,7 @@ def generate_trip(req: GenerateRequest, db: Session = Depends(get_db)):
         preferences=result.get("preferences", {}),
         research=result.get("research", {}),
         itinerary=result.get("itinerary", ""),
+        usage=result.get("usage") or {},
     )
     db.add(trip)
     db.commit()
@@ -90,6 +92,7 @@ async def generate_trip_stream(req: GenerateRequest, db: Session = Depends(get_d
             preferences=state.get("preferences", {}),
             research=state.get("research", {}),
             itinerary=state.get("itinerary", ""),
+            usage=state.get("usage") or {},
         )
         db.add(trip)
         db.commit()

@@ -57,6 +57,8 @@ class ResearchInfo(BaseModel):
     food: list[Food] = []
     transport: list[Transport] = []
     xhs_notes: list[XhsNote] = []
+    xhs_status: str = ""   # live / cached / fallback；空 = 未启用小红书
+    xhs_error: str = ""    # 失败原因，供前端透出
 
 
 class TripResponse(BaseModel):
@@ -66,6 +68,7 @@ class TripResponse(BaseModel):
     research: ResearchInfo
     itinerary: str
     created_at: str
+    usage: dict = {}   # 各 LLM 节点的 token 用量（extract/plan 的 input+output）
 
 
 class TripSummary(BaseModel):

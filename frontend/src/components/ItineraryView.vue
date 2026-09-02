@@ -29,6 +29,25 @@
             >
               {{ i }}
             </span>
+            <span
+              v-if="store.current.research.xhs_status === 'live'"
+              class="chip chip-live"
+            >
+              <Icon name="book" :size="13" />小红书实时
+            </span>
+            <span
+              v-else-if="store.current.research.xhs_status === 'cached'"
+              class="chip chip-cached"
+            >
+              <Icon name="clock" :size="13" />缓存数据
+            </span>
+            <span
+              v-else-if="store.current.research.xhs_status === 'fallback'"
+              class="chip chip-fallback"
+            >
+              <Icon name="book" :size="13" />兜底数据
+            </span>
+            <span v-if="tokenText" class="chip chip-token">{{ tokenText }}</span>
           </div>
         </div>
 
@@ -74,6 +93,17 @@ const store = useTripStore()
 const tab = ref('itinerary')
 
 const itineraryHtml = computed(() => renderMarkdown(store.current?.itinerary ?? ''))
+
+const tokenText = computed(() => {
+  const u = store.current?.usage
+  if (!u) return ''
+  const sum = (t?: { input?: number; output?: number }) =>
+    t ? (t.input || 0) + (t.output || 0) : 0
+  const parts: string[] = []
+  if (u.extract) parts.push(`抽取 ${sum(u.extract)}`)
+  if (u.plan) parts.push(`生成 ${sum(u.plan)}`)
+  return parts.length ? `${parts.join(' · ')} tokens` : ''
+})
 
 function onRegenerate() {
   if (store.current) store.generate(store.current.user_input)
@@ -173,6 +203,26 @@ async function onCopy() {
   color: var(--c-primary-hover);
   background: var(--c-primary-soft);
   border-color: transparent;
+}
+.chip-live {
+  color: var(--c-primary-hover);
+  background: var(--c-primary-soft);
+  border-color: transparent;
+}
+.chip-cached {
+  color: var(--c-teal);
+  background: var(--c-teal-soft);
+  border-color: transparent;
+}
+.chip-fallback {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+  border-color: transparent;
+}
+.chip-token {
+  color: var(--c-muted);
+  background: var(--c-surface-2);
+  border-color: var(--c-border);
 }
 .toolbar {
   display: flex;

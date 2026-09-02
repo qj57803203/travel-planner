@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     xhs_mcp_timeout_s: int = 40      # 单次 MCP 调用整体超时（搜索页冷加载可超 25s）
     xhs_collect_timeout_s: float = 75  # 一轮 xhs 采集总预算（搜索 + 详情）
     xhs_notes_per_turn: int = 5      # 每次搜索最多取几篇笔记详情
+    xhs_cache_ttl_days: int = 7      # 小红书笔记缓存有效期（天）
 
 
 settings = Settings()
