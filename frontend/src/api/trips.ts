@@ -1,15 +1,48 @@
 import axios from 'axios'
 
-import type { Trip, TripSummary } from '@/types'
+import type { StreamEvent, Trip, TripSummary } from '@/types'
 
 const http = axios.create({
   baseURL: '/api',
   timeout: 120000, // 生成涉及多次 LLM 调用，放宽超时
 })
 
-export async function generateTrip(userInput: string): Promise<Trip> {
-  const { data } = await http.post<Trip>('/generate', { user_input: userInput })
-  return data
+// 流式生成：用原生 fetch 逐段读取 SSE，实时拿到每一步进度
+export async function generateTripStream(
+  userInput: string,
+  onEvent: (e: StreamEvent) => void,
+): Promise<Trip> {
+  const resp = await fetch('/api/generate/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_input: userInput }),
+  })
+  if (!resp.ok || !resp.body) {
+    throw new Error('生成失败，请检查后端服务是否启动')
+  }
+
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  let trip: Trip | null = null
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const parts = buf.split('\n\n')
+    buf = parts.pop() ?? ''
+    for (const part of parts) {
+      const line = part.trim()
+      if (!line.startsWith('data:')) continue
+      const e = JSON.parse(line.slice(5).trim()) as StreamEvent
+      if (e.type === 'done') trip = e.trip ?? null
+      else onEvent(e)
+    }
+  }
+
+  if (!trip) throw new Error('生成失败，请检查后端服务是否启动')
+  return trip
 }
 
 export async function listTrips(): Promise<TripSummary[]> {

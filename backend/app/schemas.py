@@ -43,12 +43,20 @@ class Transport(BaseModel):
     detail: str = ""
 
 
+class XhsNote(BaseModel):
+    title: str
+    url: str = ""
+    summary: str = ""
+    cover: str = ""
+
+
 class ResearchInfo(BaseModel):
     destination: str = ""
     hotels: list[Hotel] = []
     attractions: list[Attraction] = []
     food: list[Food] = []
     transport: list[Transport] = []
+    xhs_notes: list[XhsNote] = []
 
 
 class TripResponse(BaseModel):

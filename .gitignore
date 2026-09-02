@@ -20,3 +20,7 @@ frontend/vite.config.d.ts
 # IDE
 .vscode/
 .idea/
+
+# 小红书 MCP（含登录 cookie 和二进制，不入库）
+deploy/xhs/data/
+deploy/xhs/bin/

@@ -33,12 +33,20 @@ export interface Transport {
   detail: string
 }
 
+export interface XhsNote {
+  title: string
+  url: string
+  summary: string
+  cover: string
+}
+
 export interface ResearchInfo {
   destination: string
   hotels: Hotel[]
   attractions: Attraction[]
   food: Food[]
   transport: Transport[]
+  xhs_notes: XhsNote[]
 }
 
 export interface Trip {
@@ -55,4 +63,19 @@ export interface TripSummary {
   destination: string
   days: number
   created_at: string
+}
+
+export type StageKey = 'extract' | 'research' | 'plan'
+export type StageStatus = 'pending' | 'running' | 'done'
+
+export interface StreamEvent {
+  type: 'stage' | 'xhs_note' | 'done' | 'error'
+  stage?: StageKey
+  message?: string
+  index?: number
+  title?: string
+  url?: string
+  summary?: string
+  cover?: string
+  trip?: Trip
 }

@@ -1,11 +1,7 @@
 <template>
-  <div class="result" v-loading="store.loading && store.current" element-loading-text="正在生成行程…">
-    <!-- 首次加载骨架屏 -->
-    <div v-if="store.loading && !store.current" class="skeleton">
-      <div class="sk sk-title"></div>
-      <div class="sk sk-chips"></div>
-      <div v-for="n in 3" :key="n" class="sk sk-day"></div>
-    </div>
+  <div class="result">
+    <!-- 生成中：三步进度条 + 实时爬取 -->
+    <GenerateProgress v-if="store.loading" />
 
     <!-- 空状态 -->
     <div v-else-if="!store.current" class="empty">
@@ -48,21 +44,11 @@
 
       <el-tabs v-model="tab" class="tabs">
         <el-tab-pane label="每日行程" name="itinerary">
-          <div v-if="days.length" class="days">
-            <div v-for="(d, i) in days" :key="i" class="day-card">
-              <div class="day-head">
-                <span class="day-badge">{{ i + 1 }}</span>
-                <h3>{{ d.title || '行程' }}</h3>
-              </div>
-              <div class="day-body">
-                <template v-for="(line, j) in d.lines" :key="j">
-                  <p v-if="line.trim()" class="day-line" :class="{ time: isTime(line) }">
-                    {{ line }}
-                  </p>
-                </template>
-              </div>
-            </div>
-          </div>
+          <div
+            v-if="store.current.itinerary"
+            class="itinerary-md"
+            v-html="itineraryHtml"
+          ></div>
           <el-empty v-else description="暂无行程内容" :image-size="72" />
         </el-tab-pane>
 
@@ -78,50 +64,16 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
+import GenerateProgress from '@/components/GenerateProgress.vue'
 import Icon from '@/components/Icon.vue'
 import ResearchPanel from '@/components/ResearchPanel.vue'
 import { useTripStore } from '@/store/trip'
+import { renderMarkdown } from '@/utils/markdown'
 
 const store = useTripStore()
 const tab = ref('itinerary')
 
-interface DayBlock {
-  title: string
-  lines: string[]
-}
-
-const TIME_RE = /^(上午|下午|晚上|早上|中午|清晨|傍晚|凌晨|早餐|午餐|晚餐|夜宵)/
-
-const days = computed<DayBlock[]>(() => parseDays(store.current?.itinerary ?? ''))
-
-function isTime(line: string) {
-  return TIME_RE.test(line.trim())
-}
-
-function parseDays(text: string): DayBlock[] {
-  const lines = text.split('\n')
-  const dayRe = /^(Day\s*\d+|第\s*[0-9一二三四五六七八九十]+\s*天)\s*[:：]?\s*$/i
-  const days: DayBlock[] = []
-  let cur: DayBlock | null = null
-  const head: string[] = []
-
-  for (const line of lines) {
-    const m = line.trim().match(dayRe)
-    if (m) {
-      cur = { title: m[1], lines: [] }
-      days.push(cur)
-    } else if (cur) {
-      cur.lines.push(line)
-    } else {
-      head.push(line)
-    }
-  }
-
-  if (days.length === 0) return [{ title: '', lines }]
-  // 首个「Day」标记前的文字（如标题/简介）并入第一天
-  if (head.some((l) => l.trim())) days[0].lines = [...head, ...days[0].lines]
-  return days
-}
+const itineraryHtml = computed(() => renderMarkdown(store.current?.itinerary ?? ''))
 
 function onRegenerate() {
   if (store.current) store.generate(store.current.user_input)
@@ -146,38 +98,6 @@ async function onCopy() {
   box-shadow: var(--shadow-sm);
   min-height: 70vh;
   padding: 24px;
-}
-
-/* —— 骨架屏 —— */
-.skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.sk {
-  border-radius: var(--r-md);
-  background: linear-gradient(90deg, #f1ebe3 25%, #faf6f0 37%, #f1ebe3 63%);
-  background-size: 400% 100%;
-  animation: shimmer 1.4s ease infinite;
-}
-.sk-title {
-  height: 30px;
-  width: 42%;
-}
-.sk-chips {
-  height: 20px;
-  width: 62%;
-}
-.sk-day {
-  height: 140px;
-}
-@keyframes shimmer {
-  0% {
-    background-position: 100% 0;
-  }
-  100% {
-    background-position: 0 0;
-  }
 }
 
 /* —— 空状态 —— */
@@ -263,57 +183,55 @@ async function onCopy() {
   vertical-align: -2px;
 }
 
-/* —— 分天卡片 —— */
-.days {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+/* —— Markdown 渲染的行程 —— */
+.itinerary-md :deep(h2) {
+  margin: 22px 0 12px;
+  padding-left: 12px;
+  border-left: 3px solid var(--c-primary);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--c-ink);
+  line-height: 1.4;
+}
+.itinerary-md :deep(h2:first-child) {
   margin-top: 4px;
 }
-.day-card {
-  background: var(--c-surface-2);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-lg);
-  padding: 18px 20px;
-}
-.day-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-.day-badge {
-  width: 28px;
-  height: 28px;
-  border-radius: 9px;
-  display: grid;
-  place-items: center;
-  color: #fff;
-  font-weight: 600;
-  font-size: 13px;
-  background: linear-gradient(135deg, var(--c-primary), #f2832f);
-  flex: none;
-}
-.day-head h3 {
-  margin: 0;
-  font-family: var(--font-serif);
-  font-size: 16px;
+.itinerary-md :deep(h3) {
+  margin: 14px 0 8px;
+  font-size: 15px;
   font-weight: 700;
+  color: var(--c-ink);
 }
-.day-body p {
+.itinerary-md :deep(p) {
   margin: 0 0 6px;
   font-size: 14px;
   line-height: 1.85;
   color: var(--c-ink-2);
-  white-space: pre-wrap;
-  word-break: break-word;
 }
-.day-body p:last-child {
-  margin-bottom: 0;
+.itinerary-md :deep(strong) {
+  color: var(--c-primary-hover);
+  font-weight: 700;
 }
-.day-line.time {
-  color: var(--c-ink);
-  font-weight: 600;
-  margin-top: 6px;
+.itinerary-md :deep(ul),
+.itinerary-md :deep(ol) {
+  margin: 4px 0 10px;
+  padding-left: 22px;
+}
+.itinerary-md :deep(li) {
+  margin: 3px 0;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--c-ink-2);
+}
+.itinerary-md :deep(li::marker) {
+  color: var(--c-primary);
+}
+.itinerary-md :deep(a) {
+  color: var(--c-primary-hover);
+  text-decoration: none;
+}
+.itinerary-md :deep(a:hover) {
+  text-decoration: underline;
 }
 </style>

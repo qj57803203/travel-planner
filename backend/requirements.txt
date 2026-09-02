@@ -14,3 +14,6 @@ sqlalchemy>=2.0
 langchain>=0.3
 langgraph>=0.2
 langchain-deepseek>=0.1
+
+# 小红书 MCP 客户端
+mcp>=1.2,<2

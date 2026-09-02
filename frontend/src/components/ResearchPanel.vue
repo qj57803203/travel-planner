@@ -88,12 +88,42 @@
         </article>
       </div>
     </section>
+
+    <!-- 小红书攻略 -->
+    <section class="section">
+      <header class="section-head">
+        <span class="section-ic" style="background: var(--c-primary-soft); color: var(--c-primary)">
+          <Icon name="book" :size="16" />
+        </span>
+        <h4>小红书攻略</h4>
+        <span class="section-count">{{ research.xhs_notes.length }}</span>
+      </header>
+      <el-empty v-if="!research.xhs_notes.length" description="暂无数据（未启用小红书或未登录）" :image-size="44" />
+      <div v-else class="list">
+        <a
+          v-for="n in research.xhs_notes"
+          :key="n.url"
+          class="item xhs-card"
+          :href="n.url"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <img v-if="n.cover" class="xhs-cover" :src="n.cover" alt="" loading="lazy" />
+          <div class="xhs-body">
+            <h5 class="xhs-title">{{ n.title }}</h5>
+            <div class="xhs-summary" v-html="renderMarkdown(n.summary)"></div>
+          </div>
+          <Icon name="arrow" :size="15" class="xhs-arrow" />
+        </a>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
 import type { ResearchInfo } from '@/types'
+import { renderMarkdown } from '@/utils/markdown'
 
 defineProps<{ research: ResearchInfo }>()
 </script>
@@ -238,5 +268,56 @@ defineProps<{ research: ResearchInfo }>()
 .chip-area.teal {
   color: var(--c-teal);
   background: var(--c-teal-soft);
+}
+.xhs-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  text-decoration: none;
+  color: inherit;
+}
+.xhs-card:hover {
+  border-color: var(--c-primary);
+}
+.xhs-cover {
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex: none;
+  background: var(--c-surface);
+}
+.xhs-body {
+  flex: 1;
+  min-width: 0;
+}
+.xhs-title {
+  margin: 0 0 4px;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--c-ink);
+}
+.xhs-card:hover .xhs-title {
+  color: var(--c-primary-hover);
+}
+.xhs-summary {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--c-muted);
+  max-height: 4.8em;
+  overflow: hidden;
+}
+.xhs-summary :deep(p) {
+  margin: 0;
+}
+.xhs-arrow {
+  flex: none;
+  color: var(--c-muted);
+  margin-top: 6px;
+  transition: transform 0.18s ease, color 0.18s ease;
+}
+.xhs-card:hover .xhs-arrow {
+  transform: translateX(2px);
+  color: var(--c-primary-hover);
 }
 </style>

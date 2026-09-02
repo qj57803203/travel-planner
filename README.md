@@ -11,7 +11,7 @@
 | Agent | LangChain + LangGraph（编排抽取 → 搜集 → 生成三步） |
 | LLM | DeepSeek（`deepseek-v4-flash`） |
 | 存储 | SQLite |
-| 数据源 | 预置固定示例数据（东京 / 大阪 / 巴黎） |
+| 数据源 | 预置固定示例数据（东京 / 大阪 / 巴黎）+ 小红书 MCP（可选） |
 
 ## 目录结构
 
@@ -30,8 +30,12 @@ backend/
       graph.py           # 组装 DAG
     data/
       destinations.py    # 预置目的地数据
+    tools/
+      xhs_mcp.py         # 小红书 MCP 客户端（可选数据源）
     routers/
       trips.py           # 行程接口：生成 / 列表 / 详情
+  scripts/
+    xhs_login.py         # 小红书扫码登录辅助脚本
 frontend/
   src/
     views/Home.vue       # 三段式主页面
@@ -64,6 +68,7 @@ uvicorn app.main:app --reload
 - 健康检查：http://localhost:8000/health
 
 > `DEEPSEEK_API_KEY` 在 https://platform.deepseek.com 获取。
+> 可选：接入小红书攻略数据源，见 [docs/xhs-mcp.md](docs/xhs-mcp.md)。
 
 ### 2. 前端
 
@@ -87,13 +92,13 @@ npm run dev
 
 ```text
 用户输入 → POST /api/generate
-  → LangGraph: 抽取偏好(LLM) → 匹配预置信息素材 → 生成行程(LLM)
+  → LangGraph: 抽取偏好(LLM) → 搜集素材(预置 + 小红书 MCP) → 生成行程(LLM)
   → 写入 SQLite → 返回结构化结果 → 前端渲染
 ```
 
 ## 后续扩展点
 
-- **接入真实数据源**：替换 `app/data/destinations.py` 的 `research` 节点数据来源即可（如 Tavily 搜索、网页抓取），字段结构保持不变。
+- **接入更多数据源**：小红书已接入（`app/tools/xhs_mcp.py`），可照同样方式加 Tavily 搜索、网页抓取，字段结构保持不变。
 - **多轮修改**：在 LangGraph 中增加反馈环（用户说「太累了」→ 调整 pace 后重新生成）。
 - **酒店对比 / 预算估算**：新增独立节点。
 - **浏览器 MCP**：第四阶段用 Chrome DevTools MCP 读取登录后内容。
