@@ -231,15 +231,7 @@ for node, update in items:
 ## 提交到 GitHub
 
 仓库：<https://github.com/qj57803203/travel-planner> （`origin`，分支 `main`）。git 身份已配置为 `qinjie` / `qj57803203@gmail.com`，首次提交已推送完成。
-
-后续改动提交三步：
-
-```bash
-cd "d:/项目/旅游攻略"
-git add .
-git commit -m "改了什么"
-git push
-```
+如果要提交的代码，各改动区别很大，可以分多次来提交。（不超过三次）
 
 注意点：
 
