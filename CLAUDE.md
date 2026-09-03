@@ -170,8 +170,6 @@ npm run dev    # http://localhost:5173，/api 已代理到 8000
 - **LLM 调用只有两处**：`extract`（temperature=0.0，追求稳定抽取）和 `plan`（temperature=0.7，追求多样性）。改提示词去 `prompts.py`，改节点逻辑去 `nodes.py`。
 - **节点间通信只靠 AgentState**：节点函数签名是 `(state: AgentState) -> dict`，返回的 dict 会 merge 进 state，不要用全局变量跨节点传数据。
 - **数据源混合**：预置结构化数据（兜底）+ 小红书攻略（优先，有缓存）+ 高德地图（交通规划）。`research` 节点先查缓存再实时爬取。
-- 若后端未启动，前端 error 会提示「生成失败，请检查后端服务是否启动」，问题多半在后端 8000 端口没起来。
-- 环境变量缺失（未配 `DEEPSEEK_API_KEY`）会导致 extract/plan 节点失败，但流程会走兜底继续返回结果，注意别把「成功返回」误当成「LLM 正常工作了」。
 - **调试日志**：`main.py` 配置了 `logging.basicConfig(level=logging.DEBUG)`，但 httpcore/httpx 的 DEBUG 日志太多会淹没业务日志，可临时调高其级别：`logging.getLogger("httpcore").setLevel(logging.WARNING)`。
 
 ## 踩坑记录

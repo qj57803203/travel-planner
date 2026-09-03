@@ -6,6 +6,7 @@
 坐标系：高德返回 GCJ-02（火星坐标），与前端 JS API 一致，无需转换。
 """
 import logging
+import time
 
 import httpx
 
@@ -15,28 +16,55 @@ logger = logging.getLogger(__name__)
 
 BASE = "https://restapi.amap.com"
 
+# QPS 限流：高德免费版限制 30 QPS，每次请求间隔至少 50ms
+_last_request_time = 0.0
+QPS_INTERVAL = 0.05  # 50ms，留点余量
+
 
 def enabled() -> bool:
     """未配置 key 时不启用真实交通。"""
     return bool(settings.amap_web_key)
 
 
-def _get(path: str, params: dict) -> dict | None:
-    """带 key 的 GET 请求；超时 / 网络 / 业务错误统一返回 None。"""
+def _get(path: str, params: dict, max_retries: int = 3) -> dict | None:
+    """带 key 的 GET 请求；超时 / 网络 / 业务错误统一返回 None。
+
+    遇到 QPS 限制（CUQPS_HAS_EXCEEDED_THE_LIMIT）时自动等待重试。
+    """
+    global _last_request_time
     if not enabled():
         return None
-    try:
-        with httpx.Client(timeout=settings.amap_timeout_s) as client:
-            r = client.get(f"{BASE}{path}", params={"key": settings.amap_web_key, **params})
-            r.raise_for_status()
-            data = r.json()
-    except Exception as e:  # noqa: BLE001 — 任何失败都降级，不中断
-        logger.warning("高德请求失败 %s：%s", path, e)
-        return None
-    if data.get("status") != "1":
-        logger.warning("高德返回业务错误 %s：%s", path, data.get("info"))
-        return None
-    return data
+
+    for attempt in range(max_retries):
+        # 限流：确保两次请求间隔足够
+        now = time.monotonic()
+        elapsed = now - _last_request_time
+        if elapsed < QPS_INTERVAL:
+            time.sleep(QPS_INTERVAL - elapsed)
+
+        try:
+            with httpx.Client(timeout=settings.amap_timeout_s) as client:
+                r = client.get(f"{BASE}{path}", params={"key": settings.amap_web_key, **params})
+                _last_request_time = time.monotonic()
+                r.raise_for_status()
+                data = r.json()
+        except Exception as e:  # noqa: BLE001 — 任何失败都降级，不中断
+            logger.warning("高德请求失败 %s：%s", path, e)
+            return None
+
+        if data.get("status") != "1":
+            info = data.get("info") or ""
+            # QPS 超限：等待后重试
+            if "EXCEEDED_THE_LIMIT" in info and attempt < max_retries - 1:
+                wait = 0.5 * (attempt + 1)  # 递增等待 0.5s, 1s, 1.5s
+                logger.warning("高德 QPS 超限，%.1f秒后重试（%d/%d）", wait, attempt + 1, max_retries)
+                time.sleep(wait)
+                continue
+            logger.warning("高德返回业务错误 %s：%s", path, info)
+            return None
+        return data
+
+    return None
 
 
 def _parse_polyline(s: str) -> list[list[float]]:
@@ -72,15 +100,18 @@ def geocode(address: str, city: str = "") -> dict | None:
         return None
 
 
-def transit_route(origin: str, dest: str, city: str) -> dict | None:
+def transit_route(origin: str, dest: str, city: str, cityd: str = "") -> dict | None:
     """公交路径规划（融合地铁/公交/步行/铁路）。origin/dest 为 "lng,lat"。
+
+    city: 起点城市（必填）
+    cityd: 终点城市（可选，默认与 city 相同，城际交通需传目的地城市）
 
     注意：高德 API 返回的 segments 中，walking/bus/railway 字段在无数据时
     可能返回空数组 [] 而非空对象 {}，必须用 isinstance(x, dict) 检查后再调用 .get()。
     """
     data = _get(
         "/v3/direction/transit/integrated",
-        {"origin": origin, "destination": dest, "city": city, "cityd": city},
+        {"origin": origin, "destination": dest, "city": city, "cityd": cityd or city},
     )
     transits = ((data or {}).get("route") or {}).get("transits") or []
     if not transits:

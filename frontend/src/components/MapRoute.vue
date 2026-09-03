@@ -24,10 +24,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Icon from '@/components/Icon.vue'
 import type { TransitInfo, TransitLeg } from '@/types'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   transit?: TransitInfo
-  active: boolean
-}>()
+  active?: boolean
+}>(), { active: true })
 
 const mapEl = ref<HTMLDivElement | null>(null)
 const loadError = ref(false)
@@ -90,7 +90,7 @@ async function loadAMap(): Promise<any> {
 }
 
 async function render() {
-  if (!hasData.value || !props.active) return
+  if (!hasData.value) return
   loadError.value = false
   await nextTick()
   if (!mapEl.value) return
@@ -125,7 +125,7 @@ async function render() {
         map.add(
           new AMap.Polyline({
             path: leg.polyline,
-            strokeColor: '#d9480f',
+            strokeColor: '#2563eb',
             strokeWeight: 5,
             strokeOpacity: 0.75,
             lineJoin: 'round',
@@ -142,15 +142,6 @@ async function render() {
 }
 
 watch(() => props.transit, () => render())
-watch(
-  () => props.active,
-  (on) => {
-    if (on) {
-      if (map) map.resize()
-      else render()
-    }
-  },
-)
 
 onMounted(render)
 onBeforeUnmount(() => {
@@ -165,46 +156,44 @@ onBeforeUnmount(() => {
 .map-wrap {
   position: relative;
   width: 100%;
-  min-height: 420px;
-  border-radius: var(--r-lg);
+  min-height: 500px;
   overflow: hidden;
-  border: 1px solid var(--c-border);
 }
 .map-canvas {
   width: 100%;
-  height: 420px;
+  height: 500px;
 }
 .map-empty {
-  min-height: 420px;
+  min-height: 500px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: var(--c-muted);
-  background: var(--c-surface-2);
+  color: #94a3b8;
+  background: #f5f7fa;
 }
 .map-empty p {
   margin: 0;
   font-size: 13.5px;
-  max-width: 320px;
+  max-width: 280px;
   text-align: center;
 }
 .transport-info {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 16px;
-  background: var(--c-primary-soft);
-  border-bottom: 1px solid var(--c-border);
+  padding: 10px 16px;
+  background: #dbeafe;
+  border-bottom: 1px solid #e2e8f0;
   font-size: 14px;
 }
 .transport-mode {
   font-weight: 600;
-  color: var(--c-primary-hover);
+  color: #1d4ed8;
 }
 .transport-reason {
-  color: var(--c-ink-2);
+  color: #475569;
   font-size: 13px;
 }
 </style>

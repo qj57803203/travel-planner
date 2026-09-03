@@ -1,14 +1,18 @@
 """FastAPI 应用入口。"""
 import logging
-# 配置日志级别为 DEBUG，方便调试
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
-
+# 配置日志级别为 DEBUG，方便调试
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+# 第三方库日志调高到 WARNING，避免淹没业务日志
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("http11").setLevel(logging.WARNING)
 from app.database import Base, engine
 from app.routers import trips
 

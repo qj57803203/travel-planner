@@ -1,182 +1,208 @@
 <template>
   <div class="form-card">
-    <div class="form-head">
-      <h2>想去哪儿？</h2>
-      <p class="form-sub">描述目的地、天数与偏好，剩下的交给 AI</p>
-    </div>
-
-    <el-input
-      v-model="input"
-      type="textarea"
-      :rows="5"
-      resize="none"
-      class="textarea"
-      placeholder="例如：9 月去东京玩 5 天，喜欢美食和拍照，不想太累，酒店想靠近地铁"
-    />
-
-    <div class="presets">
-      <button
-        v-for="p in presets"
-        :key="p.label"
-        class="preset"
-        type="button"
-        @click="input = p.text"
-      >
-        {{ p.label }}
-      </button>
-    </div>
-
-    <el-button class="generate-btn" type="primary" :loading="store.loading" @click="onGenerate">
-      <Icon v-if="!store.loading" name="sparkles" :size="16" />
-      <span>{{ store.loading ? '正在规划…' : '生成行程' }}</span>
-    </el-button>
-
-    <div class="history-head">
-      <span>历史记录</span>
-      <span v-if="store.history.length" class="count">{{ store.history.length }}</span>
-    </div>
-
-    <el-empty v-if="!store.history.length" description="还没有生成过行程" :image-size="56" />
-    <ul v-else class="history">
-      <li
-        v-for="t in store.history"
-        :key="t.id"
-        class="history-item"
-        :class="{ active: store.current?.id === t.id }"
-        @click="store.openTrip(t.id)"
-      >
-        <span class="dot" :style="{ background: dotColor(t.destination) }"></span>
-        <div class="history-meta">
-          <span class="name">{{ t.destination || '未命名' }}</span>
-          <span class="sub">{{ t.days }} 天 · {{ relative(t.created_at) }}</span>
+    <div class="form-row">
+      <div class="action-col">
+        <div class="departure-field">
+          <label class="departure-label">
+            <Icon name="pin" :size="13" /> 出发地
+          </label>
+          <el-input
+            v-model="departure"
+            size="default"
+            placeholder="如：上海"
+            class="departure-input"
+            clearable
+          />
         </div>
-        <Icon name="arrow" :size="15" class="history-arrow" />
-      </li>
-    </ul>
+        <el-button
+          class="generate-btn"
+          type="primary"
+          :loading="store.loading"
+          @click="onGenerate"
+        >
+          <Icon v-if="!store.loading" name="sparkles" :size="16" />
+          <span>{{ store.loading ? "正在规划…" : "生成行程" }}</span>
+        </el-button>
+      </div>
+      <div class="input-col">
+        <el-input
+          v-model="input"
+          type="textarea"
+          :rows="3"
+          resize="none"
+          class="textarea"
+          placeholder="描述你的旅行想法，例如：9 月去东京玩 5 天，喜欢美食和拍照，不想太累"
+        />
+        <div class="presets">
+          <button
+            v-for="p in presets"
+            :key="p.label"
+            class="preset"
+            type="button"
+            @click="input = p.text"
+          >
+            {{ p.label }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref } from "vue";
 
-import Icon from '@/components/Icon.vue'
-import { useTripStore } from '@/store/trip'
+import Icon from "@/components/Icon.vue";
+import * as api from "@/api/trips";
+import { useTripStore } from "@/store/trip";
 
-const store = useTripStore()
-const input = ref('')
+const store = useTripStore();
+const input = ref("");
+const departure = ref("");
 
 const presets = [
-  { label: '东京 · 美食拍照', text: '9 月去东京玩 5 天，喜欢美食和拍照，不想太累，酒店想靠近地铁' },
-  { label: '大阪 · 亲子轻松', text: '带娃去大阪玩 3 天，节奏轻松一点，想去环球影城，住市中心' },
-  { label: '巴黎 · 艺术浪漫', text: '11 月去巴黎玩 4 天，喜欢博物馆和艺术，慢节奏，想吃法餐' },
-]
+  {
+    label: "东京 · 美食拍照",
+    text: "9 月去东京玩 5 天，喜欢美食和拍照，不想太累，酒店想靠近地铁",
+  },
+  {
+    label: "大阪 · 亲子轻松",
+    text: "带娃去大阪玩 3 天，节奏轻松一点，想去环球影城，住市中心",
+  },
+  {
+    label: "巴黎 · 艺术浪漫",
+    text: "11 月去巴黎玩 4 天，喜欢博物馆和艺术，慢节奏，想吃法餐",
+  },
+];
 
-const COLORS = ['#d9480f', '#0f766e', '#2f6fed', '#c026d3', '#b7791f', '#475569']
-
-function dotColor(name: string) {
-  let h = 0
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0
-  return COLORS[h % COLORS.length]
+async function onGenerate() {
+  if (!input.value.trim()) return;
+  // 把出发地拼入 user_input（如果有值）
+  let text = input.value.trim();
+  if (departure.value.trim()) {
+    text = `从${departure.value.trim()}出发，${text}`;
+  }
+  store.generate(text);
 }
 
-function relative(s: string) {
-  const diff = Date.now() - new Date(s).getTime()
-  const m = Math.floor(diff / 60000)
-  if (m < 1) return '刚刚'
-  if (m < 60) return `${m} 分钟前`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h} 小时前`
-  const days = Math.floor(h / 24)
-  if (days === 1) return '昨天'
-  if (days < 7) return `${days} 天前`
-  return new Date(s).toLocaleDateString('zh-CN')
-}
-
-function onGenerate() {
-  if (!input.value.trim()) return
-  store.generate(input.value.trim())
-}
-
-onMounted(() => store.loadHistory())
+onMounted(async () => {
+  // 加载用户默认出发地
+  try {
+    const profile = await api.getProfile();
+    if (profile.departure) departure.value = profile.departure;
+  } catch {
+    // 静默失败
+  }
+});
 </script>
 
 <style scoped>
 .form-card {
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-xl);
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
   box-shadow: var(--shadow-sm);
-  padding: 22px;
+  padding: 18px 20px;
 }
 
-.form-head h2 {
-  margin: 0;
-  font-family: var(--font-serif);
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
+.form-row {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
 }
-.form-sub {
-  margin: 4px 0 16px;
-  font-size: 12.5px;
-  color: var(--c-muted);
+
+.input-col {
+  flex: 1;
+  min-width: 0;
 }
 
 .textarea :deep(.el-textarea__inner) {
-  background: var(--c-surface-2);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-md);
+  background: #f5f7fa;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
   font-size: 14px;
   line-height: 1.7;
-  padding: 12px 14px;
+  padding: 10px 14px;
   box-shadow: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .textarea :deep(.el-textarea__inner:focus) {
-  border-color: var(--c-primary);
-  box-shadow: 0 0 0 3px var(--c-primary-soft);
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
 .presets {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 6px;
+  margin-top: 8px;
 }
 .preset {
   appearance: none;
-  border: 1px solid var(--c-border);
-  background: var(--c-surface-2);
-  color: var(--c-ink-2);
-  font-size: 12.5px;
-  padding: 6px 11px;
+  border: 1px solid #e2e8f0;
+  background: #f5f7fa;
+  color: #475569;
+  font-size: 12px;
+  padding: 4px 10px;
   border-radius: 999px;
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
 }
 .preset:hover {
-  border-color: var(--c-primary);
-  color: var(--c-primary-hover);
-  background: var(--c-primary-soft);
+  border-color: #2563eb;
+  color: #2563eb;
+  background: #dbeafe;
+}
+
+.action-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 160px;
+  justify-content: center;
+}
+
+.departure-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.departure-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.departure-input {
+  width: 100%;
 }
 
 .generate-btn {
   width: 100%;
-  height: 46px;
-  margin-top: 16px;
+  height: 42px;
   border: none;
   border-radius: 12px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.5px;
-  background: linear-gradient(135deg, #d9480f 0%, #ef6b2a 100%);
-  box-shadow: 0 8px 20px -8px rgba(217, 72, 15, 0.55);
-  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%);
+  box-shadow: 0 6px 16px -6px rgba(37, 99, 235, 0.5);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    filter 0.15s ease;
 }
 .generate-btn:hover {
-  filter: brightness(1.03);
+  filter: brightness(1.05);
   transform: translateY(-1px);
-  box-shadow: 0 12px 26px -8px rgba(217, 72, 15, 0.6);
+  box-shadow: 0 10px 24px -6px rgba(37, 99, 235, 0.55);
 }
 .generate-btn:active {
   transform: translateY(0);
@@ -185,87 +211,21 @@ onMounted(() => store.loadHistory())
   margin-right: 5px;
 }
 
-.history-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 22px 0 10px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--c-ink-2);
-  letter-spacing: 0.5px;
-}
-.count {
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  display: grid;
-  place-items: center;
-  border-radius: 999px;
-  font-size: 12px;
-  color: var(--c-muted);
-  background: var(--c-surface-2);
-  border: 1px solid var(--c-border);
-}
-
-.history {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.history-item {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 10px 12px;
-  border-radius: var(--r-md);
-  cursor: pointer;
-  border: 1px solid transparent;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-.history-item:hover {
-  background: var(--c-surface-2);
-}
-.history-item.active {
-  background: var(--c-primary-soft);
-  border-color: var(--c-primary);
-}
-.dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  flex: none;
-}
-.history-meta {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.name {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--c-ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sub {
-  font-size: 11.5px;
-  color: var(--c-muted);
-}
-.history-arrow {
-  color: var(--c-muted);
-  flex: none;
-  opacity: 0;
-  transition: opacity 0.15s ease, transform 0.15s ease;
-}
-.history-item:hover .history-arrow {
-  opacity: 1;
-  transform: translateX(2px);
+@media (max-width: 640px) {
+  .form-row {
+    flex-direction: column;
+  }
+  .action-col {
+    flex-direction: row;
+    align-items: flex-end;
+    min-width: 0;
+  }
+  .departure-field {
+    flex: 1;
+  }
+  .generate-btn {
+    width: auto;
+    min-width: 120px;
+  }
 }
 </style>

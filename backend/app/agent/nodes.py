@@ -559,7 +559,8 @@ def plan_transport(state: AgentState) -> dict:
             # 根据 LLM 建议的交通方式选择路线查询
             if transport_mode == "train":
                 # 高铁：用公交 API（包含铁路段）
-                r = amap.transit_route(dep_geo["lnglat"], dst_geo["lnglat"], destination)
+                # 注意：city 是起点城市，cityd 是终点城市
+                r = amap.transit_route(dep_geo["lnglat"], dst_geo["lnglat"], departure, destination)
                 if r is None:
                     # 公交 API 查不到铁路，降级为驾车
                     r = amap.driving_route(dep_geo["lnglat"], dst_geo["lnglat"])

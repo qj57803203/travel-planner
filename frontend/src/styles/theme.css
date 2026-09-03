@@ -1,25 +1,25 @@
 /* ============================================================
-   旅行规划 · 全局主题（温暖旅行手账风）
-   暖陶土橙 + 青绿点缀 · 衬线标题 · 统一圆角与柔和阴影
+   旅行规划 · 全局主题（清新蓝调）
+   天蓝主色 + 青绿点缀 · 衬线标题 · 统一圆角与柔和阴影
    ============================================================ */
 
 :root {
   /* —— 品牌色 —— */
-  --c-primary: #d9480f;
-  --c-primary-hover: #bc3a0b;
-  --c-primary-soft: #fbe7d9;
+  --c-primary: #2563eb;
+  --c-primary-hover: #1d4ed8;
+  --c-primary-soft: #dbeafe;
   --c-teal: #0f766e;
   --c-teal-soft: #e3f2f0;
 
-  /* —— 中性色（暖调） —— */
-  --c-bg: #f7f3ee;
+  /* —— 中性色（冷调） —— */
+  --c-bg: #f0f4f8;
   --c-surface: #ffffff;
-  --c-surface-2: #fbf8f4;
-  --c-ink: #2a2521;
-  --c-ink-2: #5f5a55;
-  --c-muted: #a0998f;
-  --c-border: #eae2d7;
-  --c-border-strong: #ddd2c4;
+  --c-surface-2: #f5f7fa;
+  --c-ink: #1e293b;
+  --c-ink-2: #475569;
+  --c-muted: #94a3b8;
+  --c-border: #e2e8f0;
+  --c-border-strong: #cbd5e1;
 
   /* —— 语义色 —— */
   --c-success: #2f855a;
@@ -32,11 +32,11 @@
   --r-lg: 16px;
   --r-xl: 22px;
 
-  /* —— 阴影（暖调） —— */
-  --shadow-sm: 0 1px 2px rgba(61, 42, 24, 0.04), 0 1px 3px rgba(61, 42, 24, 0.05);
-  --shadow-md: 0 6px 16px -6px rgba(61, 42, 24, 0.12), 0 2px 6px rgba(61, 42, 24, 0.05);
-  --shadow-lg: 0 20px 40px -20px rgba(61, 42, 24, 0.18),
-    0 8px 20px -8px rgba(61, 42, 24, 0.08);
+  /* —— 阴影（冷调） —— */
+  --shadow-sm: 0 1px 2px rgba(30, 41, 59, 0.04), 0 1px 3px rgba(30, 41, 59, 0.06);
+  --shadow-md: 0 6px 16px -6px rgba(30, 41, 59, 0.1), 0 2px 6px rgba(30, 41, 59, 0.05);
+  --shadow-lg: 0 20px 40px -20px rgba(30, 41, 59, 0.15),
+    0 8px 20px -8px rgba(30, 41, 59, 0.08);
 
   /* —— 字体 —— */
   --font-serif: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
@@ -44,13 +44,13 @@
     'Noto Sans SC', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
 
   /* —— Element Plus 主题覆盖 —— */
-  --el-color-primary: #d9480f;
-  --el-color-primary-light-3: #e47f57;
-  --el-color-primary-light-5: #eca487;
-  --el-color-primary-light-7: #f4c8b7;
-  --el-color-primary-light-8: #f7dacf;
-  --el-color-primary-light-9: #fcede7;
-  --el-color-primary-dark-2: #ae3a0c;
+  --el-color-primary: #2563eb;
+  --el-color-primary-light-3: #5b8def;
+  --el-color-primary-light-5: #81a8f5;
+  --el-color-primary-light-7: #aec5f9;
+  --el-color-primary-light-8: #c7d7fb;
+  --el-color-primary-light-9: #e5edfd;
+  --el-color-primary-dark-2: #1e4fd1;
 
   --el-border-radius-base: 8px;
   --el-border-radius-small: 6px;
@@ -89,8 +89,8 @@ body {
 }
 
 ::selection {
-  background: var(--c-primary-soft);
-  color: var(--c-primary-hover);
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 /* 细滚动条 */
@@ -114,18 +114,18 @@ body {
 
 .el-tabs__item {
   font-weight: 500;
-  color: var(--c-ink-2);
+  color: #475569;
 }
 .el-tabs__item.is-active {
-  color: var(--c-primary);
+  color: #2563eb;
 }
 .el-tabs__active-bar {
-  background-color: var(--c-primary);
+  background-color: #2563eb;
   height: 3px;
   border-radius: 3px;
 }
 .el-tabs__nav-wrap::after {
-  background-color: var(--c-border);
+  background-color: #e2e8f0;
 }
 
 /* 尊重系统「减少动态」偏好 */

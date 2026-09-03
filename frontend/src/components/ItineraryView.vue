@@ -90,14 +90,6 @@
         <el-tab-pane label="信息素材" name="research">
           <ResearchPanel v-if="store.current" :research="store.current.research" />
         </el-tab-pane>
-
-        <el-tab-pane label="地图路线" name="map" lazy>
-          <MapRoute
-            v-if="store.current"
-            :transit="store.current.transit"
-            :active="tab === 'map'"
-          />
-        </el-tab-pane>
       </el-tabs>
     </template>
   </div>
@@ -109,7 +101,6 @@ import { ElMessage } from 'element-plus'
 
 import GenerateProgress from '@/components/GenerateProgress.vue'
 import Icon from '@/components/Icon.vue'
-import MapRoute from '@/components/MapRoute.vue'
 import ResearchPanel from '@/components/ResearchPanel.vue'
 import { useTripStore } from '@/store/trip'
 import { renderMarkdown } from '@/utils/markdown'
@@ -167,12 +158,12 @@ async function onSaveDeparture() {
 
 <style scoped>
 .result {
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-xl);
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
   box-shadow: var(--shadow-sm);
-  min-height: 70vh;
-  padding: 24px;
+  min-height: 40vh;
+  padding: 20px;
 }
 
 /* —— 空状态 —— */
@@ -181,9 +172,9 @@ async function onSaveDeparture() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 52vh;
+  min-height: 36vh;
   text-align: center;
-  color: var(--c-muted);
+  color: #94a3b8;
 }
 .empty-art {
   width: 84px;
@@ -191,15 +182,15 @@ async function onSaveDeparture() {
   border-radius: 24px;
   display: grid;
   place-items: center;
-  background: var(--c-surface-2);
-  color: var(--c-primary);
-  border: 1px dashed var(--c-border-strong);
+  background: #f5f7fa;
+  color: #2563eb;
+  border: 1px dashed #cbd5e1;
   margin-bottom: 16px;
 }
 .empty h3 {
   margin: 0 0 6px;
   font-family: var(--font-serif);
-  color: var(--c-ink);
+  color: #1e293b;
   font-size: 18px;
 }
 .empty p {
@@ -219,9 +210,10 @@ async function onSaveDeparture() {
 .result-title h2 {
   margin: 0 0 10px;
   font-family: var(--font-serif);
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
   letter-spacing: 0.3px;
+  color: #1e293b;
 }
 .chips {
   display: flex;
@@ -233,30 +225,30 @@ async function onSaveDeparture() {
   align-items: center;
   gap: 5px;
   font-size: 12.5px;
-  color: var(--c-ink-2);
+  color: #475569;
   padding: 4px 10px;
   border-radius: 999px;
-  background: var(--c-surface-2);
-  border: 1px solid var(--c-border);
+  background: #f5f7fa;
+  border: 1px solid #e2e8f0;
 }
 .chip-days {
-  color: var(--c-teal);
-  background: var(--c-teal-soft);
+  color: #0f766e;
+  background: #e3f2f0;
   border-color: transparent;
 }
 .chip-pace {
-  color: var(--c-primary-hover);
-  background: var(--c-primary-soft);
+  color: #1d4ed8;
+  background: #dbeafe;
   border-color: transparent;
 }
 .chip-live {
-  color: var(--c-primary-hover);
-  background: var(--c-primary-soft);
+  color: #1d4ed8;
+  background: #dbeafe;
   border-color: transparent;
 }
 .chip-cached {
-  color: var(--c-teal);
-  background: var(--c-teal-soft);
+  color: #0f766e;
+  background: #e3f2f0;
   border-color: transparent;
 }
 .chip-fallback {
@@ -265,9 +257,9 @@ async function onSaveDeparture() {
   border-color: transparent;
 }
 .chip-token {
-  color: var(--c-muted);
-  background: var(--c-surface-2);
-  border-color: var(--c-border);
+  color: #94a3b8;
+  background: #f5f7fa;
+  border-color: #e2e8f0;
 }
 .toolbar {
   display: flex;
@@ -285,14 +277,14 @@ async function onSaveDeparture() {
   gap: 10px;
   padding: 10px 14px;
   margin-bottom: 12px;
-  border: 1px dashed var(--c-border-strong);
-  border-radius: var(--r-md);
-  background: var(--c-primary-soft);
-  color: var(--c-ink-2);
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #dbeafe;
+  color: #475569;
   font-size: 13px;
 }
 .departure-ic {
-  color: var(--c-primary);
+  color: #2563eb;
   flex: none;
 }
 .departure-text {
@@ -307,11 +299,11 @@ async function onSaveDeparture() {
 .itinerary-md :deep(h2) {
   margin: 22px 0 12px;
   padding-left: 12px;
-  border-left: 3px solid var(--c-primary);
+  border-left: 3px solid #2563eb;
   font-family: var(--font-serif);
   font-size: 18px;
   font-weight: 700;
-  color: var(--c-ink);
+  color: #1e293b;
   line-height: 1.4;
 }
 .itinerary-md :deep(h2:first-child) {
@@ -321,16 +313,16 @@ async function onSaveDeparture() {
   margin: 14px 0 8px;
   font-size: 15px;
   font-weight: 700;
-  color: var(--c-ink);
+  color: #1e293b;
 }
 .itinerary-md :deep(p) {
   margin: 0 0 6px;
   font-size: 14px;
   line-height: 1.85;
-  color: var(--c-ink-2);
+  color: #475569;
 }
 .itinerary-md :deep(strong) {
-  color: var(--c-primary-hover);
+  color: #1d4ed8;
   font-weight: 700;
 }
 .itinerary-md :deep(ul),
@@ -342,13 +334,13 @@ async function onSaveDeparture() {
   margin: 3px 0;
   font-size: 14px;
   line-height: 1.8;
-  color: var(--c-ink-2);
+  color: #475569;
 }
 .itinerary-md :deep(li::marker) {
-  color: var(--c-primary);
+  color: #2563eb;
 }
 .itinerary-md :deep(a) {
-  color: var(--c-primary-hover);
+  color: #1d4ed8;
   text-decoration: none;
 }
 .itinerary-md :deep(a:hover) {
