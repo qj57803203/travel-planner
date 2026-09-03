@@ -14,6 +14,7 @@ class Preference(BaseModel):
     pace: str = "适中"
     interests: list[str] = []
     hotel_preference: list[str] = []
+    departure: str = ""   # 出发城市（可空，用于城际交通）
 
 
 class Hotel(BaseModel):
@@ -69,6 +70,15 @@ class TripResponse(BaseModel):
     itinerary: str
     created_at: str
     usage: dict = {}   # 各 LLM 节点的 token 用量（extract/plan 的 input+output）
+    transit: dict = {}  # 高德交通结果（结构化：source/inter_city/days，字段见 nodes.plan_transport）
+
+
+class ProfileUpdate(BaseModel):
+    departure: str = ""
+
+
+class ProfileResponse(BaseModel):
+    departure: str = ""
 
 
 class TripSummary(BaseModel):

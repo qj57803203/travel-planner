@@ -4,11 +4,12 @@ import { ref } from 'vue'
 import * as api from '@/api/trips'
 import type { StageKey, StageStatus, Trip, TripSummary, XhsNote } from '@/types'
 
-// 三步流程（与后端节点顺序一致），label 用于进度条展示
+// 流程步骤（与后端节点顺序一致），label 用于进度条展示
 export const STAGES: { key: StageKey; label: string }[] = [
   { key: 'extract', label: '抽取偏好' },
   { key: 'research', label: '搜集信息' },
   { key: 'plan', label: '生成行程' },
+  { key: 'transport', label: '规划交通' },
 ]
 
 export const useTripStore = defineStore('trip', () => {
@@ -20,12 +21,13 @@ export const useTripStore = defineStore('trip', () => {
     extract: 'pending',
     research: 'pending',
     plan: 'pending',
+    transport: 'pending',
   })
   // 实时爬取到的小红书笔记（生成过程中逐个追加，带动画展示）
   const xhsNotes = ref<XhsNote[]>([])
 
   function resetStages() {
-    stages.value = { extract: 'pending', research: 'pending', plan: 'pending' }
+    stages.value = { extract: 'pending', research: 'pending', plan: 'pending', transport: 'pending' }
     xhsNotes.value = []
   }
 
@@ -85,5 +87,16 @@ export const useTripStore = defineStore('trip', () => {
     }
   }
 
-  return { current, history, loading, error, stages, xhsNotes, generate, loadHistory, openTrip }
+  async function saveDeparture(departure: string) {
+    const d = departure.trim()
+    if (!d) return
+    try {
+      await api.saveProfile(d)
+      if (current.value) current.value.preferences.departure = d
+    } catch {
+      // 保存失败不阻塞，用户可重试
+    }
+  }
+
+  return { current, history, loading, error, stages, xhsNotes, generate, loadHistory, openTrip, saveDeparture }
 })

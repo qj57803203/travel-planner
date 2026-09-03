@@ -1,11 +1,47 @@
-"""LangGraph 的状态定义。"""
+"""LangGraph 的状态定义。
+
+节点间共享数据的唯一通道；节点函数签名 (state: AgentState) -> dict，
+返回的 dict 会 merge 进 state 供下游节点读取。
+
+数据流：START -> extract -> research -> plan -> transport -> END
+"""
 from typing import Any, TypedDict
 
 
 class AgentState(TypedDict, total=False):
-    user_input: str          # 原始自然语言需求
-    preferences: dict        # 抽取出的结构化偏好
-    research: dict           # 搜集到的四类信息素材
-    itinerary: str           # 生成的每日行程
-    error: str               # 出错信息
-    usage: dict              # 各 LLM 节点 token 用量 {"extract": {...}, "plan": {...}}
+    # ── 入口 ──
+    user_input: str          # 原始自然语言需求（入口传入）
+    profile_departure: str   # 从用户配置读取的出发地（供 extract 兜底）
+
+    # ── extract 节点输出 ──
+    preferences: dict        # 结构化偏好
+    #   {
+    #     "destination": str, "days": int, "pace": str,
+    #     "interests": [str], "hotel_preference": [str], "departure": str
+    #   }
+
+    # ── research 节点输出 ──
+    research: dict           # 搜集到的信息素材
+    #   {
+    #     "destination": str,
+    #     "hotels": [...], "attractions": [...], "food": [...], "transport": [...],
+    #     "xhs_notes": [{"title": str, "url": str, "summary": str, "cover": str}],
+    #     "xhs_status": "live" | "cached" | "fallback" | "",
+    #     "xhs_error": str,
+    #   }
+
+    # ── plan 节点输出 ──
+    itinerary: str           # 行程 markdown 正文（含 ## Day 1 等标题）
+    plan_days: list          # 每天景点序列，供 transport 节点查交通
+    #   [{"day": 1, "spots": ["景点A", "景点B"]}, ...]
+    transport_mode: str      # LLM 建议的城际交通方式："driving" | "train" | "flight" | ""
+    transport_reason: str    # 交通方式选择理由
+
+    # ── transport 节点输出 ──
+    transit: dict            # 高德交通结果（结构化，供前端地图 + 文本注入）
+    #   {"source": "amap"|"none", "inter_city": {...}|null, "days": [{"day":1,"legs":[...]}]}
+
+    # ── 全局 ──
+    error: str               # 出错信息（可选，兜底时写入）
+    usage: dict              # 各 LLM 节点 token 用量
+    #   {"extract": {"input": int, "output": int}, "plan": {"input": int, "output": int}}

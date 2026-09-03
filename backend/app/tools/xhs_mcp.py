@@ -5,7 +5,7 @@
 
 设计约束：
 - `XHS_MCP_URL` 未配置 → `enabled()=False`，调用方跳过，走预置数据兜底；
-- 一切失败（超时 / 未登录 / 结构变化）→ 返回空，绝不阻塞主流程；
+- 一切失败（超时 / 未登录 / 结构变化）→ 返回空列表并带出原因，绝不阻塞主流程；
 - 这个第三方 MCP 还暴露了 publish / comment / like / favorite 等**写操作**，而登录态是全平台
   共享账号，一旦有代码路径把工具名交给 LLM 决定就可能越权发帖。这里硬编码只读白名单，
   让越权在结构上不可能。
@@ -198,7 +198,7 @@ async def collect_xhs_sources(
     - 详情串行取（MCP 后端是单浏览器会话，并发反而互相拖慢），每篇约 20s；
     - 整轮总预算 = xhs_collect_timeout_s，超时**交回已抓到的**（部分收成），不回退全丢；
     - 连续 2 次详情失败 → 熔断，快速放弃（否则每篇都等超时，纯浪费等待）。
-    - on_note(已抓到篇数, note)：每采纳入库一篇就回调一次，供上层推送到前端。
+    - on_note(已抓到篇数, note)：每采集成功一篇就回调一次，供上层推送到前端。
     - 第二元素为错误信息（空串=无错误），整轮失败/降级时非空，交给上层透传给前端。
     """
     if not enabled():
@@ -262,7 +262,7 @@ async def _collect_within_budget(
             "cover": det.get("cover") or f.get("cover") or "",
         }
         out.append(note)
-        logger.info("  已采纳入库第 %d 篇：《%s》", len(out), det["title"][:30])
+        logger.info("  已采集第 %d 篇：《%s》", len(out), det["title"][:30])
         if on_note is not None:
             try:
                 on_note(len(out), note)

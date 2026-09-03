@@ -11,28 +11,31 @@
 | Agent 编排 | LangChain + LangGraph（抽取 → 搜集 → 生成三步 DAG） |
 | LLM | DeepSeek（`deepseek-v4-flash`） |
 | 存储 | SQLite（`backend/trips.db`，启动时自动建表） |
-| 数据源 | 预置固定示例数据（东京 / 大阪 / 巴黎），MVP 阶段无真实抓取 |
+| 数据源 | 预置目的地数据 + 小红书攻略（MCP 实时爬取/缓存） + 高德地图（交通规划） |
 
 ## 目录结构
 
 ```text
 backend/
   app/
-    main.py              # FastAPI 入口 + CORS + 启动建表
+    main.py              # FastAPI 入口 + CORS + 启动建表 + 日志配置
     config.py            # 环境变量配置（pydantic-settings，读 .env）
     schemas.py           # 接口入参/出参 + 数据结构 Pydantic 模型
     database.py          # SQLite 引擎 + SessionLocal + get_db 依赖
-    models.py            # Trip ORM 模型
+    models.py            # Trip / XhsNoteCache / UserProfile ORM 模型
     agent/
       state.py           # AgentState 状态定义（跨节点共享数据）
       prompts.py         # EXTRACT_PROMPT / PLAN_PROMPT 提示词
-      nodes.py           # 三个节点函数：抽取偏好 / 搜集信息 / 生成行程
+      nodes.py           # 四个节点函数：抽取偏好 / 搜集信息 / 生成行程 / 交通规划
       graph.py           # 组装 LangGraph DAG，导出 agent_graph
     data/
-      destinations.py    # 预置目的地数据（东京/大阪/巴黎）
+      destinations.py    # 预置目的地数据（多城市，含酒店/景点/美食/交通）
+    tools/
+      amap.py            # 高德地图 API 封装（地理编码 / 公交 / 步行 / 驾车）
+      xhs_mcp.py         # 小红书攻略采集（MCP 协议，含缓存）
     routers/
-      trips.py           # 行程接口：generate / list / detail
-  .env.example           # DeepSeek Key 等环境变量样例
+      trips.py           # 行程接口：generate / generate/stream / list / detail
+  .env.example           # 环境变量样例（DeepSeek Key / 高德 Key / 小红书配置）
   requirements.txt
 
 frontend/
@@ -70,33 +73,37 @@ docs/PRD.md                        # 产品需求文档
   → generate() 里再调 loadHistory() 刷新左侧历史列表
 ```
 
-### 2. LangGraph 内部：三个节点串行执行
+### 2. LangGraph 内部：四个节点串行执行
 
 `graph.py` 里用 `StateGraph(AgentState)` 组装的 DAG，纯线性无分支：
 
 ```text
-START → extract ──→ research ──→ plan ──→ END
-        (LLM)        (纯代码)      (LLM)
+START → extract ──→ research ──→ plan ──→ transport ──→ END
+        (LLM)        (纯代码)      (LLM)      (高德API)
 ```
 
 | 节点 | 函数 | 干什么 | 关键点 |
 |---|---|---|---|
 | extract | `extract_preferences` | LLM 从自然语言抽取结构化偏好 | `temperature=0.0`；解析失败用默认值兜底，流程不中断 |
-| research | `research` | 按目的地匹配预置四类素材 | 纯 Python 不调 LLM；目的地名做互为包含的模糊匹配 |
-| plan | `generate_itinerary` | LLM 根据偏好+素材生成每日行程 | `temperature=0.7`；失败返回空 itinerary + error |
+| research | `research` | 预置数据 + 小红书攻略采集 | 先查缓存，未命中则实时爬取；目的地名模糊匹配 |
+| plan | `generate_itinerary` | LLM 根据偏好+素材生成每日行程 | `temperature=0.7`；输出含 days（景点序列）供交通节点使用 |
+| transport | `plan_transport` | 查高德 API 生成真实交通 | 城际交通 + 逐天市内交通；结果注入行程 markdown |
 
 ### 3. AgentState 字段流转
 
 `state.py` 定义的状态，节点通过返回 dict 增量写入下一个节点可读到的字段：
 
 ```text
-user_input ──[extract]──▶ preferences ──[research]──▶ research ──[plan]──▶ itinerary
+user_input ──[extract]──▶ preferences ──[research]──▶ research ──[plan]──▶ itinerary + plan_days ──[transport]──▶ transit + itinerary(注入交通)
 ```
 
 - `user_input`：原始自然语言需求（入口传入）
-- `preferences`：`{destination, days, pace, interests, hotel_preference}`
-- `research`：`{destination, hotels[], attractions[], food[], transport[]}`
-- `itinerary`：生成的行程文本（`Day 1 / Day 2` 分天）
+- `preferences`：`{destination, days, pace, interests, hotel_preference, departure}`
+- `research`：`{destination, hotels[], attractions[], food[], transport[], xhs_notes[], xhs_status, xhs_error}`
+- `itinerary`：生成的行程文本（含 `## Day 1` 等标题，transport 节点会注入交通段落）
+- `plan_days`：每天景点序列 `[{"day": 1, "spots": ["景点A", "景点B"]}]`，供 transport 节点查高德
+- `transit`：高德交通结果 `{source, inter_city, days[{day, legs[]}]}`
+- `usage`：各 LLM 节点 token 用量 `{extract: {input, output}, plan: {input, output}}`
 - `error`：出错信息（可选，兜底时写入）
 
 ### 4. 支线流程
@@ -110,12 +117,14 @@ user_input ──[extract]──▶ preferences ──[research]──▶ resear
 
 ## 后端关键文件
 
-- `main.py`：创建 FastAPI 实例，`Base.metadata.create_all()` 启动建表，配置 CORS（只放行 5173），挂载 `trips.router`，`/health` 健康检查。
-- `config.py`：`Settings` 从 `.env` 读 `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL` / `DATABASE_URL`，默认 `deepseek-v4-flash` 和 `sqlite:///./trips.db`。
+- `main.py`：创建 FastAPI 实例，`Base.metadata.create_all()` 启动建表，配置 CORS（只放行 5173），挂载 `trips.router`，`/health` 健康检查。**日志配置**：`logging.basicConfig(level=logging.DEBUG)` 用于调试。
+- `config.py`：`Settings` 从 `.env` 读 `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL` / `DATABASE_URL` / `AMAP_WEB_KEY` / `XHS_*` 等。
 - `database.py`：SQLite 需要 `check_same_thread=False` 才能在 FastAPI 线程池复用；`get_db()` 是请求级会话依赖。
-- `models.py`：`Trip` 表，`preferences`/`research` 用 JSON 列，`itinerary` 用 Text，`created_at` 默认 `datetime.utcnow`。
-- `nodes.py`：`_parse_json()` 容忍 markdown 代码块和多余说明，稳健解析 LLM 输出的 JSON；`_get_llm()` 统一创建 DeepSeek 实例。
-- `data/destinations.py`：DESTINATIONS 字典，键是目的地名。**后续接真实数据源（搜索/抓取），只需改 `research` 节点的数据来源，保持字段结构不变。**
+- `models.py`：`Trip` 表（含 `usage`/`transit` JSON 列）、`XhsNoteCache` 表（小红书缓存）、`UserProfile` 表（记住出发地）。
+- `nodes.py`：四个节点函数 + `_parse_json()` 稳健解析 + `_get_llm()` 统一创建实例。
+- `tools/amap.py`：高德地图 API 封装（geocode / transit_route / walking_route / driving_route）。
+- `tools/xhs_mcp.py`：小红书攻略采集，MCP 协议调用，含缓存机制（一周内有效）。
+- `data/destinations.py`：多城市预置数据（酒店/景点/美食/交通四类素材）。
 
 ## 前端关键文件
 
@@ -160,9 +169,45 @@ npm run dev    # http://localhost:5173，/api 已代理到 8000
 
 - **LLM 调用只有两处**：`extract`（temperature=0.0，追求稳定抽取）和 `plan`（temperature=0.7，追求多样性）。改提示词去 `prompts.py`，改节点逻辑去 `nodes.py`。
 - **节点间通信只靠 AgentState**：节点函数签名是 `(state: AgentState) -> dict`，返回的 dict 会 merge 进 state，不要用全局变量跨节点传数据。
-- **数据源是静态兜底**：MVP 阶段目的地只有东京/大阪/巴黎三个，`research` 找不到就返回空素材，`plan` 仍会基于空素材尽力生成。
+- **数据源混合**：预置结构化数据（兜底）+ 小红书攻略（优先，有缓存）+ 高德地图（交通规划）。`research` 节点先查缓存再实时爬取。
 - 若后端未启动，前端 error 会提示「生成失败，请检查后端服务是否启动」，问题多半在后端 8000 端口没起来。
 - 环境变量缺失（未配 `DEEPSEEK_API_KEY`）会导致 extract/plan 节点失败，但流程会走兜底继续返回结果，注意别把「成功返回」误当成「LLM 正常工作了」。
+- **调试日志**：`main.py` 配置了 `logging.basicConfig(level=logging.DEBUG)`，但 httpcore/httpx 的 DEBUG 日志太多会淹没业务日志，可临时调高其级别：`logging.getLogger("httpcore").setLevel(logging.WARNING)`。
+
+## 踩坑记录
+
+### LLM 输出格式不稳定
+
+DeepSeek 返回的 JSON 格式不一致，`_parse_json()` 用三层策略兜底：
+
+1. **策略 1**：去除首尾 ` ```json ``` ` 代码块标记后解析
+2. **策略 2**：正则提取 ` ```...``` ` 代码块内容
+3. **策略 3**：找第一个 `{` 和最后一个 `}` 截取
+
+**常见问题**：
+- LLM 返回 Python 单引号格式 `{'key': 'value'}` 而非 JSON 双引号 `{"key": "value"}` → `_clean_json_text()` 用 `ast.literal_eval()` 转换
+- LLM 返回数组 `[{...}]` 而非对象 `{...}` → `_ensure_dict()` 自动取第一个元素
+- markdown 字段内嵌套一层 JSON → `_parse_plan()` 检测后自动剥层
+
+**提示词要求**（在 `prompts.py` 中已强调）：
+- 必须使用双引号（"），不能使用单引号（'）
+- 不要用 markdown 代码块包裹，直接输出 JSON
+
+### 高德 API 返回格式不一致
+
+高德公交路径规划 API（`/v3/direction/transit/integrated`）的 `segments` 数组中，`walking`/`bus`/`railway` 字段在无数据时可能返回空数组 `[]` 而非空对象 `{}`。
+
+**修复**：在 `amap.py` 的 `transit_route()` 中加 `isinstance(seg["walking"], dict)` 类型检查，避免对 list 调用 `.get()` 报错。
+
+### 流式接口的 LangGraph astream 格式
+
+`/api/generate/stream` 使用 `agent_graph.astream(state, stream_mode=["updates", "custom"])`，返回的 `data` 在新版 LangGraph 中可能是 list `[(node, update), ...]` 而非 dict，需要兼容：
+
+```python
+items = data.items() if isinstance(data, dict) else data
+for node, update in items:
+    state.update(update)
+```
 
 ## 提交到 GitHub
 

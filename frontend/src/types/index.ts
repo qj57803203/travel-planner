@@ -4,6 +4,7 @@ export interface Preference {
   pace: string
   interests: string[]
   hotel_preference: string[]
+  departure: string
 }
 
 export interface Hotel {
@@ -56,6 +57,45 @@ export interface TokenUsage {
   output: number
 }
 
+export interface TransitPoint {
+  name: string
+  lng: number
+  lat: number
+}
+
+export interface TransitLeg {
+  from: TransitPoint
+  to: TransitPoint
+  mode: string
+  summary: string
+  duration_min: number
+  distance_m: number
+  polyline: [number, number][]
+}
+
+export interface InterCity {
+  from: string
+  to: string
+  mode: string
+  summary: string
+  duration_min: number
+  distance_m: number
+  polyline: [number, number][]
+}
+
+export interface TransitDay {
+  day: number
+  legs: TransitLeg[]
+}
+
+export interface TransitInfo {
+  source: 'amap' | 'none'
+  transport_mode?: string
+  transport_reason?: string
+  inter_city?: InterCity | null
+  days: TransitDay[]
+}
+
 export interface Trip {
   id: number
   user_input: string
@@ -64,6 +104,7 @@ export interface Trip {
   itinerary: string
   created_at: string
   usage?: { extract?: TokenUsage; plan?: TokenUsage }
+  transit?: TransitInfo
 }
 
 export interface TripSummary {
@@ -73,7 +114,7 @@ export interface TripSummary {
   created_at: string
 }
 
-export type StageKey = 'extract' | 'research' | 'plan'
+export type StageKey = 'extract' | 'research' | 'plan' | 'transport'
 export type StageStatus = 'pending' | 'running' | 'done'
 
 export interface StreamEvent {

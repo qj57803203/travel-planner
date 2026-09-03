@@ -49,6 +49,7 @@ const RUNNING_TEXT: Record<StageKey, string> = {
   extract: '正在抽取你的旅行偏好…',
   research: '正在搜集目的地信息…',
   plan: '正在生成每日行程…',
+  transport: '正在规划交通路线…',
 }
 
 const runningStage = computed(() => STAGES.find((s) => store.stages[s.key] === 'running'))

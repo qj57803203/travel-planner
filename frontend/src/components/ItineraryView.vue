@@ -61,6 +61,22 @@
         </div>
       </div>
 
+      <div
+        v-if="store.current && !store.current.preferences.departure"
+        class="departure-bar"
+      >
+        <Icon name="pin" :size="14" class="departure-ic" />
+        <span class="departure-text">从哪出发？设置后可自动补全城际交通</span>
+        <el-input
+          v-model="departureInput"
+          size="small"
+          placeholder="如：上海"
+          class="departure-input"
+          @keyup.enter="onSaveDeparture"
+        />
+        <el-button size="small" type="primary" @click="onSaveDeparture">记住</el-button>
+      </div>
+
       <el-tabs v-model="tab" class="tabs">
         <el-tab-pane label="每日行程" name="itinerary">
           <div
@@ -74,25 +90,47 @@
         <el-tab-pane label="信息素材" name="research">
           <ResearchPanel v-if="store.current" :research="store.current.research" />
         </el-tab-pane>
+
+        <el-tab-pane label="地图路线" name="map" lazy>
+          <MapRoute
+            v-if="store.current"
+            :transit="store.current.transit"
+            :active="tab === 'map'"
+          />
+        </el-tab-pane>
       </el-tabs>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import GenerateProgress from '@/components/GenerateProgress.vue'
 import Icon from '@/components/Icon.vue'
+import MapRoute from '@/components/MapRoute.vue'
 import ResearchPanel from '@/components/ResearchPanel.vue'
 import { useTripStore } from '@/store/trip'
 import { renderMarkdown } from '@/utils/markdown'
 
 const store = useTripStore()
 const tab = ref('itinerary')
+const departureInput = ref('')
 
 const itineraryHtml = computed(() => renderMarkdown(store.current?.itinerary ?? ''))
+
+// 调试：监听 transit 数据变化
+watch(
+  () => store.current?.transit,
+  (transit) => {
+    console.log('[ItineraryView] transit data:', transit)
+    console.log('[ItineraryView] transit source:', transit?.source)
+    console.log('[ItineraryView] transit days:', transit?.days?.length)
+    console.log('[ItineraryView] transit inter_city:', transit?.inter_city)
+  },
+  { immediate: true },
+)
 
 const tokenText = computed(() => {
   const u = store.current?.usage
@@ -117,6 +155,13 @@ async function onCopy() {
   } catch {
     ElMessage.warning('复制失败，请手动选择文本')
   }
+}
+
+async function onSaveDeparture() {
+  if (!departureInput.value.trim()) return
+  await store.saveDeparture(departureInput.value)
+  ElMessage.success('出发地已记住，下次自动补全城际交通')
+  departureInput.value = ''
 }
 </script>
 
@@ -231,6 +276,31 @@ async function onCopy() {
 .btn-ic {
   margin-right: 4px;
   vertical-align: -2px;
+}
+
+/* —— 设置出发地条 —— */
+.departure-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border: 1px dashed var(--c-border-strong);
+  border-radius: var(--r-md);
+  background: var(--c-primary-soft);
+  color: var(--c-ink-2);
+  font-size: 13px;
+}
+.departure-ic {
+  color: var(--c-primary);
+  flex: none;
+}
+.departure-text {
+  flex: 1;
+  min-width: 0;
+}
+.departure-input {
+  width: 140px;
 }
 
 /* —— Markdown 渲染的行程 —— */

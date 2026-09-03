@@ -54,3 +54,13 @@ export async function getTrip(id: number): Promise<Trip> {
   const { data } = await http.get<Trip>(`/trips/${id}`)
   return data
 }
+
+export async function getProfile(): Promise<{ departure: string }> {
+  const { data } = await http.get<{ departure: string }>('/profile')
+  return data
+}
+
+export async function saveProfile(departure: string): Promise<{ departure: string }> {
+  const { data } = await http.post<{ departure: string }>('/profile', { departure })
+  return data
+}

@@ -5,7 +5,7 @@
 后续接入真实抓取 / 搜索 API 时，只需替换 research 节点的数据来源，保持字段结构不变。
 """
 
-DESTINATIONS = {
+兜底数据 = {
     "东京": {
         "hotels": [
             {"name": "新宿王子大饭店", "price": "约 800 元/晚", "rating": "4.3", "location": "新宿"},
