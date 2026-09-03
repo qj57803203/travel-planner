@@ -56,20 +56,70 @@ const transportModeText = computed(() => {
   return modeMap[mode || ''] || '🚗 驾车'
 })
 
-// 从 legs 里收集去重的站点坐标，作为地图 marker
-function collectMarkers(): { name: string; lng: number; lat: number }[] {
-  const seen = new Set<string>()
-  const out: { name: string; lng: number; lat: number }[] = []
-  for (const leg of legs.value) {
-    for (const p of [leg.from, leg.to]) {
-      const key = `${p.lng},${p.lat}`
-      if (!seen.has(key)) {
-        seen.add(key)
-        out.push(p)
+// 每天的颜色（最多支持 10 天，循环使用）
+const DAY_COLORS = [
+  '#2563eb', // 蓝
+  '#dc2626', // 红
+  '#16a34a', // 绿
+  '#ea580c', // 橙
+  '#7c3aed', // 紫
+  '#0891b2', // 青
+  '#ca8a04', // 黄
+  '#db2777', // 粉
+  '#4f46e5', // 靛
+  '#059669', // 翡翠
+]
+
+// 按天分组的 legs（带 day 编号和颜色）
+interface DayLegs {
+  day: number
+  color: string
+  legs: TransitLeg[]
+}
+
+const dayLegsGrouped = computed<DayLegs[]>(() => {
+  const days = props.transit?.days ?? []
+  return days.map((d, i) => ({
+    day: d.day ?? i + 1,
+    color: DAY_COLORS[i % DAY_COLORS.length],
+    legs: d.legs ?? [],
+  }))
+})
+
+// 按天收集站点坐标，附带当天路线颜色
+function collectMarkers(): { name: string; lng: number; lat: number; color: string }[] {
+  const seen = new Map<string, { name: string; lng: number; lat: number; color: string }>()
+  for (const group of dayLegsGrouped.value) {
+    for (const leg of group.legs) {
+      for (const p of [leg.from, leg.to]) {
+        const key = `${p.lng},${p.lat}`
+        if (!seen.has(key)) {
+          seen.set(key, { ...p, color: group.color })
+        }
       }
     }
   }
-  return out
+  return [...seen.values()]
+}
+
+// 取某天所有 legs 的 polyline 中间点坐标
+function getDayMidPosition(dayLegs: TransitLeg[]): { lng: number; lat: number } | null {
+  // 收集所有 polyline 点
+  const allPoints: [number, number][] = []
+  for (const leg of dayLegs) {
+    if (leg.polyline?.length) {
+      allPoints.push(...leg.polyline)
+    }
+  }
+  if (allPoints.length === 0) {
+    // 没有 polyline，退回到第一个 leg 的 from/to 中点
+    const first = dayLegs[0]
+    if (!first) return null
+    return { lng: (first.from.lng + first.to.lng) / 2, lat: (first.from.lat + first.to.lat) / 2 }
+  }
+  // 取 polyline 总长度的中间那个点
+  const midIdx = Math.floor(allPoints.length / 2)
+  return { lng: allPoints[midIdx][0], lat: allPoints[midIdx][1] }
 }
 
 function esc(s: string): string {
@@ -103,34 +153,47 @@ async function render() {
     }
     map = new AMap.Map(mapEl.value, { zoom: 12 })
 
+    // 景点标记：实心圆点（颜色跟路线一致）+ 名称文字
     const markers = collectMarkers()
     console.log('[MapRoute] markers:', markers.length, markers)
     for (const m of markers) {
       const marker = new AMap.Marker({
         position: [m.lng, m.lat],
-        title: m.name,
-        anchor: 'bottom-center',
-      })
-      marker.setLabel({
-        content: `<span class="amap-spot-label">${esc(m.name)}</span>`,
-        direction: 'top',
+        anchor: 'center',
+        zIndex: 100,
+        content: `<div class="amap-marker-wrap"><div class="amap-dot" style="background:${m.color}"></div><span class="amap-spot-label">${esc(m.name)}</span></div>`,
       })
       map.add(marker)
     }
 
-    console.log('[MapRoute] legs:', legs.value.length, legs.value)
-    for (const leg of legs.value) {
-      console.log('[MapRoute] leg polyline:', leg.from.name, '->', leg.to.name, 'points:', leg.polyline?.length)
-      if (leg.polyline?.length) {
-        map.add(
-          new AMap.Polyline({
-            path: leg.polyline,
-            strokeColor: '#2563eb',
-            strokeWeight: 5,
-            strokeOpacity: 0.75,
-            lineJoin: 'round',
-          }),
+    // 按天绘制路线，每天不同颜色
+    for (const group of dayLegsGrouped.value) {
+      console.log(`[MapRoute] Day ${group.day}: ${group.legs.length} legs, color: ${group.color}`)
+      for (const leg of group.legs) {
+        if (leg.polyline?.length) {
+          map.add(
+            new AMap.Polyline({
+              path: leg.polyline,
+              strokeColor: group.color,
+              strokeWeight: 5,
+              strokeOpacity: 0.8,
+              lineJoin: 'round',
+            }),
+          )
+        }
+      }
+      // 在当天路线的中间位置标记 "Day N"
+      const midPos = getDayMidPosition(group.legs)
+      if (midPos) {
+        const dayMarker = new AMap.Marker({
+          position: [midPos.lng, midPos.lat],
+          anchor: 'center',
+          zIndex: 120,
+        })
+        dayMarker.setContent(
+          `<div class="amap-day-tag" style="background:${group.color}">Day ${group.day}</div>`,
         )
+        map.add(dayMarker)
       }
     }
 
@@ -199,14 +262,43 @@ onBeforeUnmount(() => {
 </style>
 
 <style>
-/* marker 上的站点名标签（AMap 生成到地图容器内，需全局样式） */
+/* marker 容器：文字在圆点下方 */
+.amap-marker-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 实心圆点（颜色由 inline style 控制） */
+.amap-dot {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  flex-shrink: 0;
+}
+
+/* 站点名：普通文字，无背景无边框 */
 .amap-spot-label {
+  margin-top: 4px;
   font-size: 12px;
-  color: #1f2937;
-  background: rgba(255, 255, 255, 0.92);
-  padding: 2px 8px;
-  border-radius: 999px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  font-weight: 500;
+  color: #1e293b;
   white-space: nowrap;
+  text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff;
+  line-height: 1;
+}
+
+/* Day N 标记气泡 */
+.amap-day-tag {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  padding: 3px 10px;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+  letter-spacing: 0.5px;
 }
 </style>
