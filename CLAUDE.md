@@ -230,10 +230,12 @@ for node, update in items:
 
 ## 提交到 GitHub
 
-仓库：<https://github.com/qj57803203/travel-planner> （`origin`，分支 `main`）。git 身份已配置为 `qinjie` / `qj57803203@gmail.com`，首次提交已推送完成。
-如果要提交的代码，各改动区别很大，可以分多次来提交。（不超过三次）
+仓库：<https://github.com/qj57803203/travel-planner> （`origin`，分支 `main`）。git 身份已配置为 `qinjie` / `qj57803203@gmail.com`。
+
+- remote 已切换为 SSH 协议：`git@github.com:qj57803203/travel-planner.git`
+- SSH key 路径：`~/.ssh/id_ed25519`（ed25519，邮箱 qj57803203@gmail.com）
+- 如果要提交的代码，各改动区别很大，可以分多次来提交。（不超过三次）
 
 注意点：
 
 - `.env`（含 `DEEPSEEK_API_KEY`）、`*.db`（含 `-wal`/`-shm`）、`node_modules/`、`.venv/`、`__pycache__/` 等已写入 `.gitignore`，**真实 API Key 绝不能提交**，只提交 `.env.example` 模板。
-- 首次 push 走 HTTPS + Git Credential Manager，凭证已缓存，之后 push 无需重复登录。
