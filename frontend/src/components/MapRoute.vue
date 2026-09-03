@@ -36,7 +36,7 @@ let amapPromise: Promise<any> | null = null
 
 const legs = computed<TransitLeg[]>(() => props.transit?.days?.flatMap((d) => d.legs ?? []) ?? [])
 const hasData = computed(
-  () => props.transit?.source === 'amap' && (legs.value.length > 0 || !!props.transit?.inter_city),
+  () => props.transit?.source === 'amap' && legs.value.length > 0,
 )
 
 const emptyText = computed(() => {
@@ -92,6 +92,10 @@ function collectMarkers(): { name: string; lng: number; lat: number; color: stri
   for (const group of dayLegsGrouped.value) {
     for (const leg of group.legs) {
       for (const p of [leg.from, leg.to]) {
+        if (!p || typeof p.lng !== 'number' || typeof p.lat !== 'number') {
+          console.error('[MapRoute] ❌ 站点坐标无效:', p, '所属 leg:', leg.from?.name, '→', leg.to?.name)
+          continue
+        }
         const key = `${p.lng},${p.lat}`
         if (!seen.has(key)) {
           seen.set(key, { ...p, color: group.color })
@@ -114,12 +118,24 @@ function getDayMidPosition(dayLegs: TransitLeg[]): { lng: number; lat: number } 
   if (allPoints.length === 0) {
     // 没有 polyline，退回到第一个 leg 的 from/to 中点
     const first = dayLegs[0]
-    if (!first) return null
+    if (!first) {
+      console.warn('[MapRoute] ⚠️ getDayMidPosition: 无 legs')
+      return null
+    }
+    if (typeof first.from?.lng !== 'number' || typeof first.to?.lng !== 'number') {
+      console.error('[MapRoute] ❌ getDayMidPosition: leg 坐标无效', first.from, first.to)
+      return null
+    }
     return { lng: (first.from.lng + first.to.lng) / 2, lat: (first.from.lat + first.to.lat) / 2 }
   }
   // 取 polyline 总长度的中间那个点
   const midIdx = Math.floor(allPoints.length / 2)
-  return { lng: allPoints[midIdx][0], lat: allPoints[midIdx][1] }
+  const pt = allPoints[midIdx]
+  if (!pt || pt.length < 2 || typeof pt[0] !== 'number' || typeof pt[1] !== 'number') {
+    console.error('[MapRoute] ❌ getDayMidPosition: polyline 中间点异常', pt, 'midIdx:', midIdx, 'total:', allPoints.length)
+    return null
+  }
+  return { lng: pt[0], lat: pt[1] }
 }
 
 function esc(s: string): string {
@@ -140,10 +156,33 @@ async function loadAMap(): Promise<any> {
 }
 
 async function render() {
-  if (!hasData.value) return
+  // ── 数据诊断日志 ──
+  console.group('[MapRoute] render()')
+  console.log('transit:', JSON.parse(JSON.stringify(props.transit ?? null)))
+  console.log('hasData:', hasData.value)
+  console.log('days 数量:', props.transit?.days?.length ?? 0)
+  console.log('dayLegsGrouped:', dayLegsGrouped.value.map(g => ({ day: g.day, legs: g.legs.length, color: g.color })))
+  console.log('legs(扁平):', legs.value.length)
+
+  if (!hasData.value) {
+    // 诊断：为什么没数据
+    if (!props.transit) {
+      console.warn('[MapRoute] ❌ transit 为 undefined/null')
+    } else if (props.transit.source !== 'amap') {
+      console.warn('[MapRoute] ❌ transit.source 不是 amap，而是:', props.transit.source)
+    } else {
+      console.warn('[MapRoute] ❌ hasData=false，inter_city:', !!props.transit.inter_city, 'legs:', legs.value.length)
+    }
+    console.groupEnd()
+    return
+  }
   loadError.value = false
   await nextTick()
-  if (!mapEl.value) return
+  if (!mapEl.value) {
+    console.error('[MapRoute] ❌ mapEl 为 null，DOM 未就绪')
+    console.groupEnd()
+    return
+  }
 
   try {
     const AMap = await loadAMap()
@@ -156,7 +195,14 @@ async function render() {
     // 景点标记：实心圆点（颜色跟路线一致）+ 名称文字
     const markers = collectMarkers()
     console.log('[MapRoute] markers:', markers.length, markers)
+    if (markers.length === 0) {
+      console.warn('[MapRoute] ⚠️ 无站点坐标，地图上不会有任何标记')
+    }
     for (const m of markers) {
+      if (!m.lng || !m.lat) {
+        console.error('[MapRoute] ❌ 站点坐标异常:', m)
+        continue
+      }
       const marker = new AMap.Marker({
         position: [m.lng, m.lat],
         anchor: 'center',
@@ -166,11 +212,31 @@ async function render() {
       map.add(marker)
     }
 
-    // 按天绘制路线，每天不同颜色
+    // 按天绘制路线（只画景区之间，不画城际）
+    let totalPolylines = 0
     for (const group of dayLegsGrouped.value) {
-      console.log(`[MapRoute] Day ${group.day}: ${group.legs.length} legs, color: ${group.color}`)
+      let dayPolylines = 0
       for (const leg of group.legs) {
-        if (leg.polyline?.length) {
+        // 诊断：每条 leg 的关键字段
+        if (!leg.from?.lng || !leg.from?.lat) {
+          console.error(`[MapRoute] ❌ Day${group.day} leg.from 坐标缺失:`, leg.from)
+        }
+        if (!leg.to?.lng || !leg.to?.lat) {
+          console.error(`[MapRoute] ❌ Day${group.day} leg.to 坐标缺失:`, leg.to)
+        }
+        if (!leg.polyline || !Array.isArray(leg.polyline)) {
+          console.error(`[MapRoute] ❌ Day${group.day} ${leg.from?.name}→${leg.to?.name} polyline 不是数组:`, typeof leg.polyline)
+        } else if (leg.polyline.length === 0) {
+          console.warn(`[MapRoute] ⚠️ Day${group.day} ${leg.from?.name}→${leg.to?.name} polyline 为空数组`)
+        } else {
+          // 检查首尾点是否合法
+          const first = leg.polyline[0]
+          const last = leg.polyline[leg.polyline.length - 1]
+          if (!Array.isArray(first) || first.length < 2) {
+            console.error(`[MapRoute] ❌ Day${group.day} polyline 点格式异常:`, first)
+          } else {
+            console.log(`[MapRoute] Day${group.day} ${leg.from?.name}→${leg.to?.name}: ${leg.polyline.length} 点, 首[${first}] 末[${last}]`)
+          }
           map.add(
             new AMap.Polyline({
               path: leg.polyline,
@@ -180,8 +246,12 @@ async function render() {
               lineJoin: 'round',
             }),
           )
+          dayPolylines++
+          totalPolylines++
         }
       }
+      console.log(`[MapRoute] Day ${group.day}: ${group.legs.length} legs, 画了 ${dayPolylines} 条线, color: ${group.color}`)
+
       // 在当天路线的中间位置标记 "Day N"
       const midPos = getDayMidPosition(group.legs)
       if (midPos) {
@@ -197,10 +267,18 @@ async function render() {
       }
     }
 
+    if (totalPolylines === 0) {
+      console.error('[MapRoute] ❌ 没有任何 polyline 被画出！路线不会显示')
+    } else {
+      console.log(`[MapRoute] ✅ 共画 ${totalPolylines} 条路线`)
+    }
+
     map.setFitView(null, false, [60, 60, 60, 60])
+    console.groupEnd()
   } catch (e) {
-    console.error('高德地图加载失败', e)
+    console.error('[MapRoute] ❌ 高德地图加载/渲染失败', e)
     loadError.value = true
+    console.groupEnd()
   }
 }
 

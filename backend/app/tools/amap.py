@@ -1,6 +1,6 @@
 """高德地图 Web 服务 API 封装。
 
-只做三件事：地理编码（地名→经纬度）、路径规划（公交/步行/驾车）、结果精简。
+只做三件事：地理编码（地名→经纬度）、路径规划（铁路/地铁/步行/驾车）、结果精简。
 所有函数在失败时返回 None 而非抛异常，由调用方按需降级，绝不阻塞主流程。
 
 坐标系：高德返回 GCJ-02（火星坐标），与前端 JS API 一致，无需转换。
@@ -100,18 +100,55 @@ def geocode(address: str, city: str = "") -> dict | None:
         return None
 
 
-def transit_route(origin: str, dest: str, city: str, cityd: str = "") -> dict | None:
-    """公交路径规划（融合地铁/公交/步行/铁路）。origin/dest 为 "lng,lat"。
+def railway_route(origin: str, dest: str, city: str, cityd: str = "") -> dict | None:
+    """城际铁路路线规划。origin/dest 为 "lng,lat"。
 
     city: 起点城市（必填）
-    cityd: 终点城市（可选，默认与 city 相同，城际交通需传目的地城市）
+    cityd: 终点城市（可选，默认与 city 相同）
 
-    注意：高德 API 返回的 segments 中，walking/bus/railway 字段在无数据时
-    可能返回空数组 [] 而非空对象 {}，必须用 isinstance(x, dict) 检查后再调用 .get()。
+    只提取 railway 段，忽略市内公交/步行。
     """
     data = _get(
         "/v3/direction/transit/integrated",
         {"origin": origin, "destination": dest, "city": city, "cityd": cityd or city},
+    )
+    transits = ((data or {}).get("route") or {}).get("transits") or []
+    if not transits:
+        logger.warning("高德铁路路线无结果 origin=%s dest=%s city=%s cityd=%s", origin, dest, city, cityd)
+        return None
+    t = transits[0]
+    duration_s = int(t.get("duration") or 0)
+    distance_m = int(t.get("distance") or 0)
+    parts: list[str] = []
+    polyline: list[list[float]] = []
+    for seg in t.get("segments") or []:
+        if "railway" in seg and isinstance(seg["railway"], dict):
+            for ln in (seg["railway"].get("lines") or []):
+                dep = (ln.get("departure_stop") or {}).get("name", "")
+                arr = (ln.get("arrival_stop") or {}).get("name", "")
+                name = ln.get("name") or "铁路"
+                parts.append(f"{name} {dep}→{arr}")
+                polyline += _parse_polyline(ln.get("polyline") or "")
+    if not parts:
+        logger.warning("高德铁路路线无铁路段 origin=%s dest=%s", origin, dest)
+        return None
+    return {
+        "mode": "铁路",
+        "summary": " · ".join(parts),
+        "duration_min": round(duration_s / 60),
+        "distance_m": distance_m,
+        "polyline": polyline,
+    }
+
+
+def metro_route(origin: str, dest: str, city: str) -> dict | None:
+    """市内地铁/轻轨路线规划。origin/dest 为 "lng,lat"。
+
+    只提取地铁线路（名称含"地铁"或"轨道交通"），忽略普通公交和步行。
+    """
+    data = _get(
+        "/v3/direction/transit/integrated",
+        {"origin": origin, "destination": dest, "city": city, "cityd": city},
     )
     transits = ((data or {}).get("route") or {}).get("transits") or []
     if not transits:
@@ -122,29 +159,21 @@ def transit_route(origin: str, dest: str, city: str, cityd: str = "") -> dict | 
     parts: list[str] = []
     polyline: list[list[float]] = []
     for seg in t.get("segments") or []:
-        if "walking" in seg and isinstance(seg["walking"], dict):
-            w = seg["walking"]
-            parts.append(f"步行{int(w.get('distance') or 0)}m")
-            for st in w.get("steps") or []:
-                polyline += _parse_polyline(st.get("polyline") or "")
-        elif "bus" in seg and isinstance(seg["bus"], dict):
+        if "bus" in seg and isinstance(seg["bus"], dict):
             for ln in (seg["bus"].get("buslines") or []):
+                name = ln.get("name") or ""
+                # 只保留地铁/轻轨线路
+                if "地铁" not in name and "轨道交通" not in name:
+                    continue
                 dep = (ln.get("departure_stop") or {}).get("name", "")
                 arr = (ln.get("arrival_stop") or {}).get("name", "")
-                name = ln.get("name") or "公交"
                 parts.append(f"{name} {dep}→{arr}")
                 polyline += _parse_polyline(ln.get("polyline") or "")
-        elif "railway" in seg and isinstance(seg["railway"], dict):
-            for ln in (seg["railway"].get("lines") or []):
-                dep = (ln.get("departure_stop") or {}).get("name", "")
-                arr = (ln.get("arrival_stop") or {}).get("name", "")
-                name = ln.get("name") or "铁路"
-                parts.append(f"{name} {dep}→{arr}")
-                # 铁路段也有 polyline，需要解析
-                polyline += _parse_polyline(ln.get("polyline") or "")
+    if not parts:
+        return None
     return {
-        "mode": "公交/地铁/铁路",
-        "summary": " · ".join(parts) if parts else "公交/地铁/铁路",
+        "mode": "地铁",
+        "summary": " · ".join(parts),
         "duration_min": round(duration_s / 60),
         "distance_m": distance_m,
         "polyline": polyline,
@@ -160,12 +189,18 @@ def walking_route(origin: str, dest: str) -> dict | None:
     p = paths[0]
     duration_s = int(p.get("duration") or 0)
     distance_m = int(p.get("distance") or 0)
+    # 步行 API 的 polyline 在 steps[] 里，不在 path 层
+    polyline: list[list[float]] = []
+    for step in p.get("steps") or []:
+        polyline += _parse_polyline(step.get("polyline") or "")
+    if not polyline:
+        logger.warning("步行路线无 polyline: %s → %s", origin, dest)
     return {
         "mode": "步行",
         "summary": f"步行约{round(distance_m / 1000, 1)}公里，约{round(duration_s / 60)}分钟",
         "duration_min": round(duration_s / 60),
         "distance_m": distance_m,
-        "polyline": _parse_polyline(p.get("polyline") or ""),
+        "polyline": polyline,
     }
 
 
@@ -178,10 +213,16 @@ def driving_route(origin: str, dest: str) -> dict | None:
     p = paths[0]
     duration_s = int(p.get("duration") or 0)
     distance_m = int(p.get("distance") or 0)
+    # 驾车 API 的 polyline 在 steps[] 里，不在 path 层
+    polyline: list[list[float]] = []
+    for step in p.get("steps") or []:
+        polyline += _parse_polyline(step.get("polyline") or "")
+    if not polyline:
+        logger.warning("驾车路线无 polyline: %s → %s", origin, dest)
     return {
         "mode": "驾车",
         "summary": f"驾车约{round(distance_m / 1000)}公里，约{round(duration_s / 3600, 1)}小时",
         "duration_min": round(duration_s / 60),
         "distance_m": distance_m,
-        "polyline": _parse_polyline(p.get("polyline") or ""),
+        "polyline": polyline,
     }

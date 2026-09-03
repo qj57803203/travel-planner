@@ -127,7 +127,7 @@ def _parse_json(text: str) -> dict:
         result = _ensure_dict(result, "策略 1（首尾去 ```）")
         return result
     except (json.JSONDecodeError, ValueError, TypeError) as e:
-        logger.debug("_parse_json: 策略 1 失败 — %s", e)
+        logger.error("_parse_json: 策略 1 失败 — %s", e)
 
     # ── 策略 2：正则提取 ```...``` 代码块内容（问题 B）──
     m = re.search(r"```(?:json)?\s*(.+?)```", text, re.DOTALL)
@@ -138,9 +138,9 @@ def _parse_json(text: str) -> dict:
             result = _ensure_dict(result, "策略 2（正则提取代码块）")
             return result
         except (json.JSONDecodeError, ValueError, TypeError) as e:
-            logger.debug("_parse_json: 策略 2 失败 — %s", e)
+            logger.error("_parse_json: 策略 2 失败 — %s", e)
     else:
-        logger.debug("_parse_json: 策略 2 跳过（未找到 ```...``` 代码块）")
+        logger.error("_parse_json: 策略 2 跳过（未找到 ```...``` 代码块）")
 
     # ── 策略 3：手动匹配最外层 { }（问题 C）──
     start, end = text.find("{"), text.rfind("}")
@@ -151,9 +151,9 @@ def _parse_json(text: str) -> dict:
             result = _ensure_dict(result, "策略 3（匹配最外层 {}）")
             return result
         except (json.JSONDecodeError, ValueError, TypeError) as e:
-            logger.debug("_parse_json: 策略 3 失败 — %s", e)
+            logger.error("_parse_json: 策略 3 失败 — %s", e)
     else:
-        logger.debug("_parse_json: 策略 3 跳过（未找到 { }）")
+        logger.error("_parse_json: 策略 3 跳过（未找到 { }）")
 
     # 所有策略均失败
     logger.error(
@@ -548,7 +548,14 @@ def plan_transport(state: AgentState) -> dict:
 
     # 未配置 key / 无目的地 / 无景点序列：直接透传空交通
     if not amap.enabled() or not destination or not days:
+        logger.warning(
+            "plan_transport: 跳过交通规划 — amap.enabled=%s, destination='%s', days=%d",
+            amap.enabled(), destination, len(days),
+        )
         return {"transit": {"source": "none", "inter_city": None, "days": []}}
+
+    logger.info("plan_transport: 开始 — destination='%s', departure='%s', days=%d, transport_mode=%s",
+                destination, departure, len(days), transport_mode)
 
     # 1. 城际交通（出发地 ≠ 目的地且都非空）
     inter_city = None
@@ -558,11 +565,10 @@ def plan_transport(state: AgentState) -> dict:
         if dep_geo and dst_geo:
             # 根据 LLM 建议的交通方式选择路线查询
             if transport_mode == "train":
-                # 高铁：用公交 API（包含铁路段）
-                # 注意：city 是起点城市，cityd 是终点城市
-                r = amap.transit_route(dep_geo["lnglat"], dst_geo["lnglat"], departure, destination)
+                # 高铁：查铁路路线
+                r = amap.railway_route(dep_geo["lnglat"], dst_geo["lnglat"], departure, destination)
                 if r is None:
-                    # 公交 API 查不到铁路，降级为驾车
+                    # 查不到铁路，降级为驾车
                     r = amap.driving_route(dep_geo["lnglat"], dst_geo["lnglat"])
             elif transport_mode == "flight":
                 # 飞机：高德不支持航班查询，给文字提示
@@ -604,11 +610,33 @@ def plan_transport(state: AgentState) -> dict:
         "days": transit_days,
     }
 
+    # 汇总日志
+    total_legs = sum(len(d.get("legs", [])) for d in transit_days)
+    total_polylines = sum(
+        1 for d in transit_days for leg in d.get("legs", []) if leg.get("polyline")
+    )
+    logger.info(
+        "plan_transport: 完成 — source=%s, 城际=%s, 天数=%d, 总路段=%d, 有polyline=%d",
+        transit["source"],
+        "有" if inter_city else "无",
+        len(transit_days),
+        total_legs,
+        total_polylines,
+    )
+    if total_legs > 0 and total_polylines == 0:
+        logger.error("plan_transport: ⚠️ 有路段但无 polyline！地图将无法画线")
+
     return {"transit": transit, "itinerary": _inject_transit(itinerary, transit)}
 
 
 def _build_legs(spots: list, city: str) -> list[dict]:
-    """对一串景点相邻两两查高德；geocode 每站一次（run 内缓存），失败段跳过。"""
+    """对一串景点相邻两两查高德，生成市内交通。
+
+    逻辑：
+    - 距离 < 2km → 步行
+    - 否则 → 对比驾车和地铁耗时，选耗时短的
+    """
+    # 1. 批量地理编码
     coords: dict[str, dict] = {}
     for name in spots:
         name = (name or "").strip()
@@ -617,70 +645,165 @@ def _build_legs(spots: list, city: str) -> list[dict]:
         geo = amap.geocode(f"{city}{name}", city)
         if geo:
             coords[name] = geo
+            logger.info("地理编码 ✅ %s%s → [%.6f, %.6f]", city, name, geo["lng"], geo["lat"])
+        else:
+            logger.warning("地理编码 ❌ %s%s → 无结果", city, name)
 
-    legs = []
+    # 诊断：哪些景点没编码成功
     names = [n.strip() for n in spots if (n or "").strip()]
+    missing = [n for n in names if n not in coords]
+    if missing:
+        logger.warning("_build_legs: 以下景点地理编码失败，将跳过相关路段: %s", missing)
+    if not coords:
+        logger.error("_build_legs: 所有景点均编码失败，无法生成任何交通路线")
+        return []
+
+    # 2. 逐段查交通
+    legs = []
     for i in range(len(names) - 1):
         a, b = names[i], names[i + 1]
         ga, gb = coords.get(a), coords.get(b)
         if not ga or not gb:
+            logger.warning("跳过路段 %s → %s：坐标缺失（ga=%s, gb=%s）", a, b, bool(ga), bool(gb))
             continue
-        r = amap.transit_route(ga["lnglat"], gb["lnglat"], city)
-        if r is None:
+
+        # 先查驾车，获取距离
+        driving = amap.driving_route(ga["lnglat"], gb["lnglat"])
+        distance = driving.get("distance_m", 0) if driving else 0
+
+        # 距离 < 2km → 步行
+        if distance < 2000:
             r = amap.walking_route(ga["lnglat"], gb["lnglat"])
-        if r is None:
-            continue
+            if r is None:
+                logger.warning("路段 %s → %s：步行路线查询失败", a, b)
+                continue
+            logger.info("市内交通 %s → %s：步行 %dm", a, b, distance)
+        else:
+            # 对比驾车和地铁耗时
+            metro = amap.metro_route(ga["lnglat"], gb["lnglat"], city)
+            driving_time = driving.get("duration_min", 999) if driving else 999
+            metro_time = metro.get("duration_min", 999) if metro else 999
+
+            if metro and metro_time <= driving_time:
+                r = metro
+                logger.info("市内交通 %s → %s：地铁 %dmin（驾车 %dmin）", a, b, metro_time, driving_time)
+            elif driving:
+                r = driving
+                logger.info("市内交通 %s → %s：驾车 %dmin", a, b, driving_time)
+            else:
+                logger.warning("路段 %s → %s：驾车和地铁均查询失败", a, b)
+                continue
+
+        # 校验返回数据完整性
+        polyline = r.get("polyline")
+        if not polyline or not isinstance(polyline, list) or len(polyline) == 0:
+            logger.error("路段 %s → %s：%s 返回的 polyline 为空或无效，mode=%s", a, b, r.get("mode"), r.get("mode"))
+
         legs.append({
             "from": {"name": a, "lng": ga["lng"], "lat": ga["lat"]},
             "to": {"name": b, "lng": gb["lng"], "lat": gb["lat"]},
             **r,
         })
+
+    logger.info("_build_legs: %s 市内共生成 %d/%d 路段", city, len(legs), len(names) - 1)
     return legs
 
 
+def _format_leg_line(leg: dict) -> str:
+    """格式化单条交通路线，用 emoji 区分交通方式。"""
+    summary = leg.get("summary", "")
+    duration = leg.get("duration_min", 0)
+    distance = leg.get("distance_m", 0)
+    mode = leg.get("mode", "")
+
+    # 根据 summary 或 mode 判断交通方式并选择 emoji
+    if "步行" in summary or mode == "walking":
+        emoji = "🚶‍"
+        # 从 summary 提取距离信息
+        dist_text = f"{distance // 1000}km" if distance >= 1000 else f"{distance}m"
+        return f"{emoji} 步行 {dist_text} · {duration}分钟"
+    elif "地铁" in summary or "轨" in summary or mode == "metro":
+        emoji = "🚇"
+        return f"{emoji} 地铁 · {duration}分钟"
+    elif "驾车" in summary or "打车" in summary or mode == "driving":
+        emoji = "🚗"
+        dist_text = f"{distance // 1000}km" if distance >= 1000 else f"{distance}m"
+        return f"{emoji} 驾车 {dist_text} · {duration}分钟"
+    else:
+        emoji = "🚌"
+        return f"{emoji} {summary} · {duration}分钟"
+
+
 def _inject_transit(itinerary: str, transit: dict) -> str:
-    """把城际出发 + 每天交通作为 markdown 块注入正文；解析失败则原样返回。"""
+    """把城际出发 + 每天交通注入正文，交通信息穿插在景点之间。
+
+    格式示例：
+        - 🏛️ 苏州博物馆（2小时）
+        - 🚶 步行 0.9km · 11分钟
+        - 🏘️ 平江路历史街区（1.5小时）
+        - 🚇 地铁 · 15分钟
+        - 🌙 山塘街（晚餐+夜游）
+    """
     if not itinerary:
         return itinerary
 
-    day_blocks: dict[int, str] = {}
+    # 预处理每天的交通 legs
+    day_legs: dict[int, list] = {}
     for d in transit.get("days") or []:
         legs = d.get("legs") or []
-        if not legs:
-            continue
-        lines = [
-            f"- {leg['from']['name']} → {leg['to']['name']}：{leg.get('summary', '')}（约{leg.get('duration_min', 0)}分钟）"
-            for leg in legs
-        ]
-        try:
-            day_blocks[int(d.get("day", 0))] = "**🚇 市内交通**\n" + "\n".join(lines)
-        except (TypeError, ValueError):
-            continue
+        if legs:
+            try:
+                day_legs[int(d.get("day", 0))] = legs
+            except (TypeError, ValueError):
+                continue
 
     out: list[str] = []
+
+    # 1. 城际交通（放在最前面）
     inter = transit.get("inter_city")
     if inter:
-        # 根据交通方式选择 emoji
         mode = inter.get("transport_mode", "")
         mode_emoji = {"driving": "🚗", "train": "🚄", "flight": "✈️"}.get(mode, "🚗")
         mode_name = {"driving": "驾车", "train": "高铁/火车", "flight": "飞机"}.get(mode, "驾车")
         transport_reason = inter.get("transport_reason", "")
         reason_line = f"\n- 💡 {transport_reason}" if transport_reason else ""
         out.append(
-            f"**{mode_emoji} 城际交通（{mode_name}）**\n- 从 {inter.get('from', '')} 到 {inter.get('to', '')}："
-            f"{inter.get('summary', '')}{reason_line}\n\n"
+            f"**{mode_emoji} 城际交通（{mode_name}）**\n"
+            f"- 从 {inter.get('from', '')} 到 {inter.get('to', '')}：{inter.get('summary', '')}{reason_line}\n\n"
         )
 
-    if day_blocks:
+    # 2. 按 Day 分割行程，注入每日交通
+    if day_legs:
         segs = re.split(r"(?m)(?=^##\s*Day\s*\d+)", itinerary)
-        for seg in segs:
-            out.append(seg)
+        for i, seg in enumerate(segs):
             m = re.match(r"##\s*Day\s*(\d+)", seg.strip())
             if m:
-                block = day_blocks.get(int(m.group(1)))
-                if block:
-                    out.append("\n\n" + block)
+                day_no = int(m.group(1))
+                legs = day_legs.get(day_no, [])
+                if legs:
+                    # 将交通信息插入到景点之间
+                    lines = seg.split("\n")
+                    new_lines = []
+                    leg_idx = 0
+                    for line in lines:
+                        new_lines.append(line)
+                        # 检查当前行是否包含景点名（from 景点）
+                        if leg_idx < len(legs):
+                            from_name = legs[leg_idx].get("from", {}).get("name", "")
+                            if from_name and from_name in line:
+                                # 在景点后面插入交通信息
+                                transit_line = _format_leg_line(legs[leg_idx])
+                                new_lines.append(transit_line)
+                                leg_idx += 1
+                    out.append("\n".join(new_lines))
+                else:
+                    out.append(seg)
+            else:
+                out.append(seg)
+            # 确保 Day 之间有换行分隔
+            if i < len(segs) - 1:
+                out.append("\n\n")
         return "".join(out)
 
-    # 没有可注入的每日交通，只有城际段时直接前缀
+    # 没有每日交通，只有城际时直接前缀
     return "".join(out) + itinerary

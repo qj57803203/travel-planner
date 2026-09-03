@@ -50,6 +50,7 @@ frontend/
   vite.config.ts                   # dev 代理 /api → http://localhost:8000
 
 docs/PRD.md                        # 产品需求文档
+docs/交通规划.md                    # 交通规划逻辑（城际/市内/注入行程）
 ```
 
 ## 核心流程走向（重点）
@@ -170,7 +171,27 @@ npm run dev    # http://localhost:5173，/api 已代理到 8000
 - **LLM 调用只有两处**：`extract`（temperature=0.0，追求稳定抽取）和 `plan`（temperature=0.7，追求多样性）。改提示词去 `prompts.py`，改节点逻辑去 `nodes.py`。
 - **节点间通信只靠 AgentState**：节点函数签名是 `(state: AgentState) -> dict`，返回的 dict 会 merge 进 state，不要用全局变量跨节点传数据。
 - **数据源混合**：预置结构化数据（兜底）+ 小红书攻略（优先，有缓存）+ 高德地图（交通规划）。`research` 节点先查缓存再实时爬取。
-- **调试日志**：`main.py` 配置了 `logging.basicConfig(level=logging.DEBUG)`，但 httpcore/httpx 的 DEBUG 日志太多会淹没业务日志，可临时调高其级别：`logging.getLogger("httpcore").setLevel(logging.WARNING)`。
+- **日志级别约定**：业务日志统一用 `logger.info` 或 `logger.warning`，不要用 `logger.debug`（DEBUG 级别日志太多会淹没业务日志）。`main.py` 配置了 `logging.basicConfig(level=logging.DEBUG)`，但 httpcore/httpx 的 DEBUG 日志太多会淹没业务日志，可临时调高其级别：`logging.getLogger("httpcore").setLevel(logging.WARNING)`。
+
+### 直接操作 SQLite 数据库
+
+系统无 `sqlite3` 命令行工具，用 Python 操作：
+
+```bash
+cd backend
+python -c "
+import sqlite3
+conn = sqlite3.connect('trips.db')
+c = conn.cursor()
+c.execute('SELECT id, substr(user_input, 1, 50) FROM trips')  # 查看
+c.execute('DELETE FROM trips WHERE id BETWEEN 18 AND 23')      # 删除
+conn.commit()
+conn.close()
+"
+```
+
+- 路径：`backend/trips.db`
+- 主表：`trips`（行程）、`xhs_note_cache`（小红书缓存）、`user_profiles`（用户偏好）
 
 ## 踩坑记录
 
