@@ -27,12 +27,22 @@ DEFAULT_PREFERENCES = {
 logger = logging.getLogger(__name__)
 
 
-def _get_llm(temperature: float = 0.0) -> ChatDeepSeek:
-    return ChatDeepSeek(
-        model=settings.deepseek_model,
-        api_key=settings.deepseek_api_key,
-        temperature=temperature,
-    )
+def _get_llm(temperature: float = 0.0, json_mode: bool = False) -> ChatDeepSeek:
+    """创建 LLM 实例。
+
+    Args:
+        temperature: 温度参数，0.0 追求稳定，0.7 追求多样性
+        json_mode: 是否强制输出 JSON（通过 response_format=json_object）
+    """
+    kwargs = {
+        "model": settings.deepseek_model,
+        "api_key": settings.deepseek_api_key,
+        "temperature": temperature,
+    }
+    if json_mode:
+        # 强制模型输出合法 JSON
+        kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
+    return ChatDeepSeek(**kwargs)
 
 
 def _usage(resp) -> dict:
@@ -51,136 +61,28 @@ def _usage(resp) -> dict:
     }
 
 
-def _clean_json_text(text: str) -> str:
-    """清理 LLM 输出中的 JSON 文本，修正常见格式瑕疵。
-
-    LLM 理想输出：合法 JSON 字符串，如 `{"key": "value"}`。
-    实际常遇到的问题：
-    - 字符串值内含裸换行/制表符（json.loads 不认，需转义为 \\n \\t）
-    - JSON 末尾多写逗号 trailing comma，如 `{"a": 1,}`（json.loads 不认）
-    - LLM 用 Python 单引号格式 `{'key': 'value'}` 而非 JSON 双引号（DeepSeek 常见）
-    """
-    # 处理单引号格式：{'key': 'value'} → {"key": "value"}
-    # 只在开头是 { 且包含单引号时尝试转换（用 ast.literal_eval 安全解析 Python 字面量）
-    if text.startswith("{") and "'" in text:
-        try:
-            import ast
-            text = str(ast.literal_eval(text))
-        except Exception:
-            pass  # 转换失败则继续用原文，让后续策略处理
-    text = text.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
-    text = re.sub(r",\s*([}\]])", r"\1", text)  # trailing comma
-    return text
-
-
 def _parse_json(text: str) -> dict:
-    """稳健地解析 LLM 输出中的 JSON，按优先级尝试多种策略。
-
-    ────────────────────────────────────────────────────────────
-    LLM 理想输出（PLAN_PROMPT / EXTRACT_PROMPT 都明确要求）：
-
-        {"destination": "东京", "days": 5, ...}
-
-    即：一个合法 JSON **对象**，无任何前后缀、无代码块包裹。
-
-    ────────────────────────────────────────────────────────────
-    LLM 实际常犯的问题（按本函数策略依次兜底）：
-
-    问题 A — 用 markdown 代码块包裹：
-        ```json
-        {"destination": "东京", ...}
-        ```
-      → 策略 1：strip 首尾 ``` 标记后直接解析。
-
-    问题 B — 代码块中间夹杂说明文字，首尾 ``` 不在字符串首尾：
-        以下是抽取结果：
-        ```json
-        {"destination": "东京", ...}
-        ```
-        以上是抽取结果。
-      → 策略 2：正则搜索 ```...``` 代码块，提取块内内容解析。
-
-    问题 C — 无代码块，但 JSON 前后有多余说明文字：
-        好的，以下是结构化偏好：{"destination": "东京", ...} 以上就是。
-      → 策略 3：找第一个 { 和最后一个 }，截取中间内容解析。
-
-    问题 D — LLM 返回的是 JSON 数组而非对象：
-        [{"destination": "东京", ...}]
-      → 解析成功后校验类型；若为 list 且首元素是 dict，自动取第一个元素。
-
-    ────────────────────────────────────────────────────────────
+    """解析 LLM 输出的 JSON（已启用 response_format=json_object，直接解析即可）。
 
     Returns:
-        解析后的 dict。所有策略均失败时抛出 ValueError（由调用方决定 fallback）。
+        解析后的 dict。解析失败时抛出 ValueError（由调用方 fallback）。
     """
+    logger.info("大模型输出：%s\n",text)
     if not isinstance(text, str):
         raise TypeError(f"期望 str，实际收到 {type(text).__name__}")
 
-    text = text.strip()
-
-    # ── 策略 1：去除首尾 ``` 标记后直接解析（问题 A）──
-    cleaned = re.sub(r"^```(?:json)?\s*", "", text)
-    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
     try:
-        result = json.loads(_clean_json_text(cleaned))
-        logger.debug("_parse_json: 策略 1 解析结果 type=%s", type(result).__name__)
-        result = _ensure_dict(result, "策略 1（首尾去 ```）")
-        return result
-    except (json.JSONDecodeError, ValueError, TypeError) as e:
-        logger.error("_parse_json: 策略 1 失败 — %s", e)
+        result = json.loads(text.strip())
+    except json.JSONDecodeError as e:
+        logger.error("_parse_json: JSON 解析失败 — %s\n原始输出:\n%s", e, text)
+        raise ValueError(f"JSON 解析失败: {e}") from e
 
-    # ── 策略 2：正则提取 ```...``` 代码块内容（问题 B）──
-    m = re.search(r"```(?:json)?\s*(.+?)```", text, re.DOTALL)
-    if m:
-        try:
-            result = json.loads(_clean_json_text(m.group(1).strip()))
-            logger.debug("_parse_json: 策略 2 解析结果 type=%s", type(result).__name__)
-            result = _ensure_dict(result, "策略 2（正则提取代码块）")
-            return result
-        except (json.JSONDecodeError, ValueError, TypeError) as e:
-            logger.error("_parse_json: 策略 2 失败 — %s", e)
-    else:
-        logger.error("_parse_json: 策略 2 跳过（未找到 ```...``` 代码块）")
-
-    # ── 策略 3：手动匹配最外层 { }（问题 C）──
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        try:
-            result = json.loads(_clean_json_text(text[start : end + 1]))
-            logger.debug("_parse_json: 策略 3 解析结果 type=%s", type(result).__name__)
-            result = _ensure_dict(result, "策略 3（匹配最外层 {}）")
-            return result
-        except (json.JSONDecodeError, ValueError, TypeError) as e:
-            logger.error("_parse_json: 策略 3 失败 — %s", e)
-    else:
-        logger.error("_parse_json: 策略 3 跳过（未找到 { }）")
-
-    # 所有策略均失败
-    logger.error(
-        "_parse_json: 所有策略均失败，无法解析 LLM 输出（前 200 字符）：\n%s",
-        text[:200],
-    )
-    raise ValueError("无法从 LLM 输出中提取有效 JSON")
-
-
-def _ensure_dict(result, strategy_name: str) -> dict:
-    """校验 JSON 解析结果必须是 dict；若为 list 且首元素是 dict 则自动取第一个。
-
-    LLM 有时把对象包在数组里返回，如 [{"destination": "东京", ...}]。
-    """
-    if isinstance(result, dict):
-        return result
+    # LLM 有时返回数组包裹对象，自动取第一个
     if isinstance(result, list) and result and isinstance(result[0], dict):
-        logger.warning(
-            "_parse_json: %s 解析结果是 list[%d]，取第一个元素（LLM 返回了数组而非对象）",
-            strategy_name, len(result),
-        )
         return result[0]
-    logger.error(
-        "_parse_json: %s 解析结果类型异常 — %s（期望 dict）",
-        strategy_name, type(result).__name__,
-    )
-    raise TypeError(f"JSON 解析结果是 {type(result).__name__}，期望 dict")
+    if not isinstance(result, dict):
+        raise ValueError(f"期望 JSON 对象，实际收到 {type(result).__name__}")
+    return result
 
 
 def _stream_writer():
@@ -215,7 +117,7 @@ def extract_preferences(state: AgentState) -> dict:
         }
     """
     try:
-        llm = _get_llm(temperature=0.0)
+        llm = _get_llm(temperature=0.0, json_mode=True)
         chain = ChatPromptTemplate.from_template(EXTRACT_PROMPT) | llm
         resp = chain.invoke({"input": state["user_input"]})
         usage = _usage(resp)
@@ -379,7 +281,7 @@ def generate_itinerary(state: AgentState) -> dict:
     """
     prefs = state.get("preferences", {})
     research = state.get("research", {})
-    llm = _get_llm(temperature=0.7)
+    llm = _get_llm(temperature=0.7, json_mode=True)
     # 结构化素材单独给，小红书笔记单独一段，避免重复
     structured = {k: v for k, v in research.items() if k != "xhs_notes"}
     prompt = PLAN_PROMPT.format(
@@ -395,12 +297,13 @@ def generate_itinerary(state: AgentState) -> dict:
         logger.info("plan 消耗 token：input=%s output=%s", usage["input"], usage["output"])
         usage_map = state.get("usage", {})
         usage_map["plan"] = usage
-        markdown, days, transport_mode, transport_reason = _parse_plan(resp.content)
+        markdown, days, transport_mode, transport_reason, accommodation_area = _parse_plan(resp.content)
         return {
             "itinerary": markdown,
             "plan_days": days,
             "transport_mode": transport_mode,
             "transport_reason": transport_reason,
+            "accommodation_area": accommodation_area,
             "usage": usage_map,
         }
     except Exception as e:
@@ -442,7 +345,7 @@ def _parse_plan(content: str) -> tuple[str, list, str, str]:
     ────────────────────────────────────────────────────────────
 
     Returns:
-        (markdown, days, transport_mode, transport_reason)
+        (markdown, days, transport_mode, transport_reason, accommodation_area)
     """
     # ── 第 1 步：尝试正常解析 JSON ──
     try:
@@ -457,6 +360,7 @@ def _parse_plan(content: str) -> tuple[str, list, str, str]:
         days = data.get("days") or []
         transport_mode = data.get("transport_mode") or ""
         transport_reason = data.get("transport_reason") or ""
+        accommodation_area = data.get("accommodation_area") or ""
 
         # ── 问题 2：markdown 字段里嵌套了一层 JSON，尝试剥一层 ──
         if isinstance(markdown, str) and markdown.strip().startswith("{"):
@@ -473,14 +377,15 @@ def _parse_plan(content: str) -> tuple[str, list, str, str]:
 
         if isinstance(markdown, str) and markdown.strip():
             logger.info(
-                "_parse_plan: 解析成功 — markdown=%d字符, days=%d天, transport=%s",
-                len(markdown), len(days), transport_mode or "无",
+                "_parse_plan: 解析成功 — markdown=%d字符, days=%d天, transport=%s, accommodation=%s",
+                len(markdown), len(days), transport_mode or "无", accommodation_area or "无",
             )
             return (
                 markdown,
                 days if isinstance(days, list) else [],
                 transport_mode,
                 transport_reason,
+                accommodation_area,
             )
         else:
             logger.warning(
@@ -495,7 +400,7 @@ def _parse_plan(content: str) -> tuple[str, list, str, str]:
             markdown = json.loads(f'"{m.group(1)}"')  # 还原转义
             if markdown.strip():
                 logger.info("_parse_plan: 正则挽救成功，提取 markdown 字段（长度=%d）", len(markdown))
-                return markdown, [], "", ""
+                return markdown, [], "", "", ""
         except Exception as e:  # noqa: BLE001
             logger.warning("_parse_plan: 正则挽救后 json.loads 失败 — %s", e)
 
@@ -504,7 +409,140 @@ def _parse_plan(content: str) -> tuple[str, list, str, str]:
         "_parse_plan: 所有策略均失败，返回原始内容作为 itinerary（长度=%d，前 200 字符）：\n%s",
         len(content), content[:200],
     )
-    return content, [], "", ""
+    return content, [], "", "", ""
+
+
+def hotel_search(state: AgentState) -> dict:
+    """节点 4：根据住宿建议搜索携程酒店，取前2个高性价比酒店注入行程。
+
+    Returns:
+        {
+            "hotels": [{"name": str, "price": float, "rating": float, "image": str, "url": str, "location": str}],
+            "itinerary": str  # 注入酒店推荐后的完整行程
+        }
+    """
+    from app.tools import ctrip_crawler
+
+    accommodation_area = state.get("accommodation_area", "")
+    destination = state.get("preferences", {}).get("destination", "")
+    itinerary = state.get("itinerary", "")
+
+    # 分别判断跳过原因，打清楚日志
+    if not accommodation_area:
+        logger.warning("hotel_search: 跳过 — 未提取到住宿建议（accommodation_area 为空）")
+        return {"hotels": []}
+    if not ctrip_crawler.enabled():
+        logger.warning("hotel_search: 跳过 — 携程爬虫未启用（CTRIPE_MCP_URL 未配置）")
+        return {"hotels": []}
+
+    # 从住宿建议中提取搜索关键词（如"乐桥站"、"临顿路站"）
+    keywords = _extract_hotel_keywords(accommodation_area)
+    if not keywords:
+        logger.warning("hotel_search: 跳过 — 无法从住宿建议中提取关键词，原始文本: %s", accommodation_area[:100])
+        return {"hotels": []}
+
+    logger.info("hotel_search: 开始搜索携程酒店，目的地=%s，关键词=%s", destination, keywords)
+
+    # 搜索携程酒店（取第一个关键词搜索，取前5条）
+    hotels = ctrip_crawler.search_hotels_sync(destination, keywords[0], limit=5)
+
+    if not hotels:
+        logger.warning("hotel_search: 携程搜索无结果（爬虫运行正常但未返回数据），关键词=%s", keywords[0])
+        return {"hotels": []}
+
+    # 按性价比排序（价格低、评分高），取前2个
+    hotels_sorted = sorted(hotels, key=lambda h: (h.get("price", 9999) / (h.get("rating", 1) or 1)))[:2]
+    logger.info("hotel_search: 排序完成，选取前 %d 个酒店", len(hotels_sorted))
+
+    # 注入酒店推荐到行程
+    hotel_block = _format_hotel_block(hotels_sorted)
+    if hotel_block:
+        # 在"住宿建议"后面插入酒店推荐
+        itinerary = _inject_hotels(itinerary, accommodation_area, hotel_block)
+
+    return {"hotels": hotels_sorted, "itinerary": itinerary}
+
+
+def _extract_hotel_keywords(accommodation_area: str) -> list[str]:
+    """从住宿建议中提取搜索关键词（地铁站名、商圈名等）。
+
+    支持多种格式：
+    - "地铁1号线/4号线沿线（如乐桥站、临顿路站附近）" → ["乐桥站", "临顿路站"]
+    - "建议住宿在地铁2号线/4号线沿线，如江汉路、中南路附近" → ["江汉路", "中南路"]
+    - "西湖附近（如龙翔桥站、凤起路站）" → ["龙翔桥站", "凤起路站"]
+    """
+    import re
+
+    # 策略 1：提取「（如...）」或「(如...)」括号内的内容
+    m = re.search(r'[（(]如(.+?)[）)]', accommodation_area)
+    if m:
+        content = m.group(1)
+        keywords = re.split(r'[、，,]', content)
+        # 去掉"站"、"附近"等后缀，只保留核心名称
+        return [re.sub(r'(站|附近)$', '', k.strip()) for k in keywords if k.strip()]
+
+    # 策略 2：提取「，如...」或「，如...附近」后面的内容
+    m = re.search(r'[,，]如(.+?)(?:，|。|$)', accommodation_area)
+    if m:
+        content = m.group(1)
+        keywords = re.split(r'[、，,]', content)
+        return [re.sub(r'(站|附近)$', '', k.strip()) for k in keywords if k.strip()]
+
+    # 策略 3：尝试提取所有「XX站」
+    keywords = re.findall(r'([一-龥]{2,6}站)', accommodation_area)
+    if keywords:
+        return [k.rstrip('站') for k in keywords]
+
+    return []
+
+
+def _format_hotel_block(hotels: list[dict]) -> str:
+    """格式化酒店推荐块。"""
+    if not hotels:
+        return ""
+
+    lines = ["**🏨 推荐酒店**"]
+    for i, h in enumerate(hotels, 1):
+        name = h.get("name", "")
+        price = h.get("price", 0)
+        rating = h.get("rating", 0)
+        location = h.get("location", "")
+        url = h.get("url", "")
+
+        price_text = f"¥{price:.0f}/晚" if price else "价格待询"
+        rating_text = f"⭐{rating:.1f}" if rating else ""
+        location_text = f"📍{location}" if location else ""
+
+        line = f"- **{name}** {price_text} {rating_text}"
+        if location_text:
+            line += f" {location_text}"
+        if url:
+            line += f" [查看详情]({url})"
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+def _inject_hotels(itinerary: str, accommodation_area: str, hotel_block: str) -> str:
+    """将酒店推荐注入到行程的住宿建议后面。"""
+    # 查找"住宿建议"所在行
+    lines = itinerary.split('\n')
+    new_lines = []
+    injected = False
+
+    for line in lines:
+        new_lines.append(line)
+        # 在"住宿建议"后面插入酒店推荐
+        if '住宿建议' in line and not injected:
+            new_lines.append('')
+            new_lines.append(hotel_block)
+            injected = True
+
+    # 如果没有找到"住宿建议"，在行程开头插入
+    if not injected:
+        new_lines.insert(0, hotel_block + '\n')
+
+    return '\n'.join(new_lines)
 
 
 def plan_transport(state: AgentState) -> dict:

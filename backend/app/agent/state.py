@@ -36,6 +36,11 @@ class AgentState(TypedDict, total=False):
     #   [{"day": 1, "spots": ["景点A", "景点B"]}, ...]
     transport_mode: str      # LLM 建议的城际交通方式："driving" | "train" | "flight" | ""
     transport_reason: str    # 交通方式选择理由
+    accommodation_area: str  # 住宿区域建议，如"地铁1号线/4号线沿线（如乐桥站附近）"
+
+    # ── hotel_search 节点输出 ──
+    hotels: list             # 携程酒店搜索结果
+    #   [{"name": str, "price": float, "rating": float, "image": str, "url": str, "location": str}]
 
     # ── transport 节点输出 ──
     transit: dict            # 高德交通结果（结构化，供前端地图 + 文本注入）
