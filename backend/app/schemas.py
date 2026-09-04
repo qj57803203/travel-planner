@@ -19,9 +19,11 @@ class Preference(BaseModel):
 
 class Hotel(BaseModel):
     name: str
-    price: str = ""
-    rating: str = ""
+    price: float = 0
+    rating: float = 0
     location: str = ""
+    image: str = ""
+    url: str = ""
     pros: list[str] = []
     cons: list[str] = []
 
@@ -71,6 +73,7 @@ class TripResponse(BaseModel):
     created_at: str
     usage: dict = {}   # 各 LLM 节点的 token 用量（extract/plan 的 input+output）
     transit: dict = {}  # 高德交通结果（结构化：source/inter_city/days，字段见 nodes.plan_transport）
+    hotels: list[Hotel] = []  # 携程酒店搜索结果
 
 
 class ProfileUpdate(BaseModel):

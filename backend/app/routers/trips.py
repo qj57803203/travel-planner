@@ -19,6 +19,7 @@ STAGE_MESSAGES = {
     "extract": "偏好已确认",
     "research": "素材已就绪",
     "plan": "行程已生成",
+    "hotel_search": "酒店已搜索",
     "transport": "交通已规划",
 }
 
@@ -62,6 +63,7 @@ def _to_response(trip: Trip) -> TripResponse:
         created_at=trip.created_at.isoformat(),
         usage=trip.usage or {},
         transit=trip.transit or {},
+        hotels=trip.hotels or [],
     )
 
 
@@ -79,6 +81,7 @@ def generate_trip(req: GenerateRequest, db: Session = Depends(get_db)):
         itinerary=result.get("itinerary", ""),
         usage=result.get("usage") or {},
         transit=result.get("transit") or {},
+        hotels=result.get("hotels") or [],
     )
     db.add(trip)
     db.commit()
@@ -129,6 +132,7 @@ async def generate_trip_stream(req: GenerateRequest, db: Session = Depends(get_d
             itinerary=state.get("itinerary", ""),
             usage=state.get("usage") or {},
             transit=state.get("transit") or {},
+            hotels=state.get("hotels") or [],
         )
         db.add(trip)
         db.commit()

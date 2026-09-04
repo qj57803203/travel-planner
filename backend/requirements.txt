@@ -20,3 +20,6 @@ langchain-deepseek>=0.1
 
 # 小红书 MCP 客户端
 mcp>=1.2,<2
+
+# 日志颜色
+colorlog>=6.7

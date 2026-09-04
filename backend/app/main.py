@@ -1,13 +1,26 @@
 """FastAPI 应用入口。"""
 import logging
 
+import colorlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
-# 配置日志级别为 DEBUG，方便调试
+
+# 带颜色的日志配置
+handler = colorlog.StreamHandler()
+handler.setFormatter(colorlog.ColoredFormatter(
+    "%(asctime)s %(log_color)s%(levelname)-8s%(reset)s %(name)s: %(message)s",
+    log_colors={
+        'DEBUG':    'cyan',
+        'INFO':     'green',
+        'WARNING':  'yellow',
+        'ERROR':    'red',
+        'CRITICAL': 'bold_red',
+    },
+))
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[handler],
 )
 # 第三方库日志调高到 WARNING，避免淹没业务日志
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -22,7 +35,7 @@ from app.routers import trips
 Base.metadata.create_all(bind=engine)
 # 轻量迁移：为已存在的 trips 表补新增列（create_all 不会改旧表结构）
 _trips_cols = [c["name"] for c in inspect(engine).get_columns("trips")]
-for _col, _type in (("usage", "JSON"), ("transit", "JSON")):
+for _col, _type in (("usage", "JSON"), ("transit", "JSON"), ("hotels", "JSON")):
     if _col not in _trips_cols:
         with engine.begin() as conn:
             conn.execute(text(f"ALTER TABLE trips ADD COLUMN {_col} {_type}"))
