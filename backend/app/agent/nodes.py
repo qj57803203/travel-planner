@@ -444,7 +444,7 @@ def hotel_search(state: AgentState) -> dict:
     logger.info("hotel_search: 开始搜索携程酒店，目的地=%s，关键词=%s", destination, keywords)
 
     # 搜索携程酒店（取第一个关键词搜索，取前5条）
-    hotels = ctrip_crawler.search_hotels_sync(destination, keywords[0], limit=5)
+    hotels, list_page_url = ctrip_crawler.search_hotels_sync(destination, keywords[0], limit=5)
 
     if not hotels:
         logger.warning("hotel_search: 携程搜索无结果（爬虫运行正常但未返回数据），关键词=%s", keywords[0])
@@ -453,6 +453,10 @@ def hotel_search(state: AgentState) -> dict:
     # 按性价比排序（价格低、评分高），取前2个
     hotels_sorted = sorted(hotels, key=lambda h: (h.get("price", 9999) / (h.get("rating", 1) or 1)))[:2]
     logger.info("hotel_search: 排序完成，选取前 %d 个酒店", len(hotels_sorted))
+
+    # 给每个酒店加上列表页链接（前端"查看更多"按钮用）
+    for h in hotels_sorted:
+        h["url"] = list_page_url
 
     # 注入酒店推荐到行程
     hotel_block = _format_hotel_block(hotels_sorted)
