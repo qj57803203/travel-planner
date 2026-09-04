@@ -13,6 +13,11 @@ class AgentState(TypedDict, total=False):
     user_input: str          # 原始自然语言需求（入口传入）
     profile_departure: str   # 从用户配置读取的出发地（供 extract 兜底）
 
+    # ── 多轮对话（修改模式） ──
+    chat_history: list       # 对话历史 [{"role": "user"|"assistant", "content": str}, ...]
+    previous_itinerary: str  # 上一轮行程 markdown（供 plan 节点参考修改）
+    is_modification: bool    # True = 修改模式，False = 首次生成
+
     # ── extract 节点输出 ──
     preferences: dict        # 结构化偏好
     #   {
@@ -45,6 +50,7 @@ class AgentState(TypedDict, total=False):
     # ── transport 节点输出 ──
     transit: dict            # 高德交通结果（结构化，供前端地图 + 文本注入）
     #   {"source": "amap"|"none", "inter_city": {...}|null, "days": [{"day":1,"legs":[...]}]}
+    transit_error: str       # 交通规划失败原因（非空时前端展示提示，transit 为空）
 
     # ── 全局 ──
     error: str               # 出错信息（可选，兜底时写入）

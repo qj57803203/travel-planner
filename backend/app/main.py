@@ -35,7 +35,7 @@ from app.routers import trips
 Base.metadata.create_all(bind=engine)
 # 轻量迁移：为已存在的 trips 表补新增列（create_all 不会改旧表结构）
 _trips_cols = [c["name"] for c in inspect(engine).get_columns("trips")]
-for _col, _type in (("usage", "JSON"), ("transit", "JSON"), ("hotels", "JSON")):
+for _col, _type in (("usage", "JSON"), ("transit", "JSON"), ("transit_error", "TEXT"), ("hotels", "JSON"), ("parent_id", "INTEGER"), ("chat_history", "JSON")):
     if _col not in _trips_cols:
         with engine.begin() as conn:
             conn.execute(text(f"ALTER TABLE trips ADD COLUMN {_col} {_type}"))

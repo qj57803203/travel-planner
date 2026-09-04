@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_deepseek import ChatDeepSeek
 
-from app.agent.prompts import EXTRACT_PROMPT, PLAN_PROMPT
+from app.agent.prompts import EXTRACT_PROMPT, MODIFY_EXTRACT_PROMPT, MODIFY_PLAN_PROMPT, PLAN_PROMPT
 from app.agent.state import AgentState
 from app.config import settings
 from app.data.destinations import 兜底数据
@@ -103,35 +103,71 @@ def _emit_xhs_note(writer, index: int, note: dict) -> None:
 def extract_preferences(state: AgentState) -> dict:
     """节点 1：从自然语言需求抽取结构化偏好。
 
+    修改模式下（is_modification=True），从用户反馈中提取修改意图，
+    与上一轮 preferences 合并后返回。
+
     Returns:
         {
-            "preferences": {
-                "destination": str,   # 目的地
-                "days": int,          # 旅行天数
-                "pace": str,          # 节奏："轻松" / "适中" / "紧凑"
-                "interests": [str],   # 兴趣列表，如 ["美食", "拍照"]
-                "hotel_preference": [str],  # 酒店偏好
-                "departure": str,     # 出发城市（可空）
-            },
-            "usage": {"extract": {"input": int, "output": int}}
+            "preferences": {...},
+            "usage": {"extract": {...}},
+            "_destination_changed": bool  # 供 graph 条件分支判断是否跳过 research
         }
     """
+    is_mod = state.get("is_modification", False)
+
     try:
         llm = _get_llm(temperature=0.0, json_mode=True)
-        chain = ChatPromptTemplate.from_template(EXTRACT_PROMPT) | llm
-        resp = chain.invoke({"input": state["user_input"]})
-        usage = _usage(resp)
 
-        data = _parse_json(resp.content)
-        logger.debug("extract_preferences: _parse_json 返回 type=%s, data=%s", type(data).__name__, str(data)[:200])
-        prefs = {**DEFAULT_PREFERENCES, **data}
-        prefs["days"] = int(prefs.get("days") or 1)
-        # 出发地兜底：输入里没提取到就用用户配置里记住的出发地
-        if not (prefs.get("departure") or "").strip():
-            prefs["departure"] = (state.get("profile_departure") or "").strip()
-        return {"preferences": prefs, "usage": {"extract": usage}}
+        if is_mod:
+            # ── 修改模式：提取修改意图，合并到上一轮偏好 ──
+            prev_prefs = state.get("preferences", {})
+            chain = ChatPromptTemplate.from_template(MODIFY_EXTRACT_PROMPT) | llm
+            resp = chain.invoke({
+                "input": state["user_input"],
+                "previous_preferences": json.dumps(prev_prefs, ensure_ascii=False),
+            })
+            usage = _usage(resp)
+            data = _parse_json(resp.content)
+            logger.info("extract_preferences(修改模式): 修改意图=%s", data.get("modification_intent", ""))
+
+            # 合并：上一轮偏好 + 修改意图
+            prefs = {**prev_prefs}
+            new_dest = (data.get("destination") or "").strip()
+            if new_dest:
+                prefs["destination"] = new_dest
+            new_pace = (data.get("pace") or "").strip()
+            if new_pace:
+                prefs["pace"] = new_pace
+
+            # 兴趣增删
+            old_interests = set(prefs.get("interests") or [])
+            old_interests.update(data.get("interests_to_add") or [])
+            old_interests -= set(data.get("interests_to_remove") or [])
+            prefs["interests"] = list(old_interests)
+
+            # 判断目的地是否变化（供 graph 跳过 research）
+            old_dest = (prev_prefs.get("destination") or "").strip()
+            dest_changed = bool(new_dest) and new_dest != old_dest
+
+            return {"preferences": prefs, "usage": {"extract": usage}, "_destination_changed": dest_changed}
+        else:
+            # ── 首次生成：原有逻辑 ──
+            chain = ChatPromptTemplate.from_template(EXTRACT_PROMPT) | llm
+            resp = chain.invoke({"input": state["user_input"]})
+            usage = _usage(resp)
+
+            data = _parse_json(resp.content)
+            logger.debug("extract_preferences: _parse_json 返回 type=%s, data=%s", type(data).__name__, str(data)[:200])
+            prefs = {**DEFAULT_PREFERENCES, **data}
+            prefs["days"] = int(prefs.get("days") or 1)
+            # 出发地兜底：输入里没提取到就用用户配置里记住的出发地
+            if not (prefs.get("departure") or "").strip():
+                prefs["departure"] = (state.get("profile_departure") or "").strip()
+            return {"preferences": prefs, "usage": {"extract": usage}}
     except Exception as e:  # 抽取失败时用默认值兜底，让流程继续
-        return {"preferences": DEFAULT_PREFERENCES.copy(), "error": f"偏好抽取失败: {e}"}
+        logger.error("extract_preferences 异常: %s", e, exc_info=True)
+        fallback = state.get("preferences", DEFAULT_PREFERENCES.copy()) if is_mod else DEFAULT_PREFERENCES.copy()
+        return {"preferences": fallback, "error": f"偏好抽取失败: {e}"}
 
 
 def research(state: AgentState) -> dict:
@@ -265,10 +301,21 @@ def _format_xhs_notes(notes: list[dict]) -> str:
     return "\n".join(parts)
 
 
+def _format_chat_history(history: list[dict]) -> str:
+    """将对话历史格式化为可读文本，供 MODIFY_PLAN_PROMPT 使用。"""
+    if not history:
+        return "（无对话历史）"
+    parts = []
+    for msg in history:
+        role = "用户" if msg.get("role") == "user" else "助手"
+        parts.append(f"【{role}】{msg.get('content', '')[:500]}")
+    return "\n\n".join(parts)
+
+
 def generate_itinerary(state: AgentState) -> dict:
     """节点 3：根据偏好 + 信息素材 + 小红书笔记生成每日行程。
 
-    LLM 返回 JSON（见 PLAN_PROMPT），经 _parse_plan 解析后拆成四段。
+    修改模式下（is_modification=True），使用 MODIFY_PLAN_PROMPT 在上一轮行程基础上修改。
 
     Returns:
         {
@@ -281,16 +328,34 @@ def generate_itinerary(state: AgentState) -> dict:
     """
     prefs = state.get("preferences", {})
     research = state.get("research", {})
+    is_mod = state.get("is_modification", False)
     llm = _get_llm(temperature=0.7, json_mode=True)
     # 结构化素材单独给，小红书笔记单独一段，避免重复
     structured = {k: v for k, v in research.items() if k != "xhs_notes"}
-    prompt = PLAN_PROMPT.format(
-        pace=prefs.get("pace", "适中"),
-        interests="、".join(prefs.get("interests", [])) or "无特殊偏好",
-        preferences=json.dumps(prefs, ensure_ascii=False, indent=2),
-        research=json.dumps(structured, ensure_ascii=False, indent=2),
-        xhs_notes=_format_xhs_notes(research.get("xhs_notes", [])),
-    )
+
+    if is_mod:
+        # ── 修改模式：在上一轮行程基础上修改 ──
+        chat_history = state.get("chat_history", [])
+        previous_itinerary = state.get("previous_itinerary", "")
+        prompt = MODIFY_PLAN_PROMPT.format(
+            pace=prefs.get("pace", "适中"),
+            preferences=json.dumps(prefs, ensure_ascii=False, indent=2),
+            research=json.dumps(structured, ensure_ascii=False, indent=2),
+            xhs_notes=_format_xhs_notes(research.get("xhs_notes", [])),
+            chat_history=_format_chat_history(chat_history),
+            previous_itinerary=previous_itinerary[:3000],  # 截断避免 token 溢出
+        )
+        logger.info("generate_itinerary: 修改模式，使用 MODIFY_PLAN_PROMPT")
+    else:
+        # ── 首次生成：原有逻辑 ──
+        prompt = PLAN_PROMPT.format(
+            pace=prefs.get("pace", "适中"),
+            interests="、".join(prefs.get("interests", [])) or "无特殊偏好",
+            preferences=json.dumps(prefs, ensure_ascii=False, indent=2),
+            research=json.dumps(structured, ensure_ascii=False, indent=2),
+            xhs_notes=_format_xhs_notes(research.get("xhs_notes", [])),
+        )
+
     try:
         resp = llm.invoke(prompt)
         usage = _usage(resp)
@@ -633,16 +698,30 @@ def plan_transport(state: AgentState) -> dict:
                     **r,
                 }
 
-    # 2. 逐天逐站查交通
+    # 2. 逐天逐站查交通（任何一天有景点编码失败 → 整体不返回交通）
     transit_days = []
+    all_errors = []
     for d in days:
+        # 防御性检查：确保 d 是 dict 格式
+        if not isinstance(d, dict):
+            logger.warning("plan_transport: days 中有非 dict 元素，跳过 — type=%s, value=%s", type(d).__name__, d)
+            continue
         try:
             day_no = int(d.get("day", 1))
         except (TypeError, ValueError):
             continue
-        legs = _build_legs(d.get("spots") or [], destination)
+        legs, err = _build_legs(d.get("spots") or [], destination)
+        if err:
+            all_errors.append(f"Day {day_no}：{err}")
         if legs:
             transit_days.append({"day": day_no, "legs": legs})
+
+    # 有任何一天的景点编码失败 → 整体不返回交通，告知前端原因
+    if all_errors:
+        error_summary = "；".join(all_errors)
+        logger.warning("plan_transport: 存在地理编码失败，跳过整个交通规划 — %s", error_summary)
+        empty_transit = {"source": "none", "transport_mode": transport_mode, "transport_reason": transport_reason, "inter_city": None, "days": []}
+        return {"transit": empty_transit, "transit_error": error_summary, "itinerary": itinerary}
 
     transit = {
         "source": "amap" if (transit_days or inter_city) else "none",
@@ -671,12 +750,16 @@ def plan_transport(state: AgentState) -> dict:
     return {"transit": transit, "itinerary": _inject_transit(itinerary, transit)}
 
 
-def _build_legs(spots: list, city: str) -> list[dict]:
+def _build_legs(spots: list, city: str) -> tuple[list[dict], str]:
     """对一串景点相邻两两查高德，生成市内交通。
 
     逻辑：
     - 距离 < 2km → 步行
     - 否则 → 对比驾车和地铁耗时，选耗时短的
+
+    Returns:
+        (legs, error) — legs 为路段列表，error 为失败原因（空串=成功）。
+        任何景点地理编码失败时，error 非空，legs 为空列表（不返回不完整的交通）。
     """
     # 1. 批量地理编码
     coords: dict[str, dict] = {}
@@ -695,10 +778,13 @@ def _build_legs(spots: list, city: str) -> list[dict]:
     names = [n.strip() for n in spots if (n or "").strip()]
     missing = [n for n in names if n not in coords]
     if missing:
-        logger.warning("_build_legs: 以下景点地理编码失败，将跳过相关路段: %s", missing)
+        error_msg = f"以下景点无法在高德地图定位：{'、'.join(missing)}，无法生成交通路线"
+        logger.warning("_build_legs: %s", error_msg)
+        return [], error_msg
     if not coords:
-        logger.error("_build_legs: 所有景点均编码失败，无法生成任何交通路线")
-        return []
+        error_msg = "所有景点均无法在高德地图定位，无法生成交通路线"
+        logger.error("_build_legs: %s", error_msg)
+        return [], error_msg
 
     # 2. 逐段查交通
     legs = []
@@ -748,7 +834,7 @@ def _build_legs(spots: list, city: str) -> list[dict]:
         })
 
     logger.info("_build_legs: %s 市内共生成 %d/%d 路段", city, len(legs), len(names) - 1)
-    return legs
+    return legs, ""
 
 
 def _format_leg_line(leg: dict) -> str:

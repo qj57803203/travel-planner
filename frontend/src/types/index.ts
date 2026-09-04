@@ -98,6 +98,11 @@ export interface TransitInfo {
   days: TransitDay[]
 }
 
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 export interface Trip {
   id: number
   user_input: string
@@ -107,7 +112,10 @@ export interface Trip {
   created_at: string
   usage?: { extract?: TokenUsage; plan?: TokenUsage }
   transit?: TransitInfo
+  transit_error?: string  // 交通规划失败原因（非空时展示提示）
   hotels?: Hotel[]
+  chat_history?: ChatMessage[]
+  parent_id?: number | null
 }
 
 export interface TripSummary {

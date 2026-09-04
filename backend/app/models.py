@@ -26,7 +26,11 @@ class Trip(Base):
     itinerary: Mapped[str] = mapped_column(Text, nullable=False, default="")
     usage: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
     transit: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+    transit_error: Mapped[str] = mapped_column(Text, nullable=False, default="")  # 交通规划失败原因
     hotels: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
+    # ── 多轮对话 ──
+    parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True)      # 关联原始行程（修改链头）
+    chat_history: Mapped[list | None] = mapped_column(JSON, nullable=True)      # 对话历史 [{"role": str, "content": str}]
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

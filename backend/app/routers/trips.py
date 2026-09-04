@@ -14,6 +14,8 @@ from app.schemas import GenerateRequest, ProfileResponse, ProfileUpdate, TripRes
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["trips"])
 
+MAX_CHAT_ROUNDS = 5  # 多轮对话最大修改轮数
+
 # 各节点完成后的进度文案（与前端进度条对齐）
 STAGE_MESSAGES = {
     "extract": "偏好已确认",
@@ -30,9 +32,75 @@ def _read_profile_departure(db: Session) -> str:
     return (row.departure_city or "").strip() if row else ""
 
 
-def _initial_state(user_input: str, db: Session) -> dict:
-    """构造 Agent 初始状态，附带用户配置里的出发地供 extract 兜底。"""
-    return {"user_input": user_input, "profile_departure": _read_profile_departure(db)}
+def _count_rounds(db: Session, trip_id: int) -> int:
+    """沿 parent_id 链计算当前对话轮数（不含首次生成）。"""
+    visited = set()
+    current_id = trip_id
+    rounds = 0
+    while current_id and current_id not in visited:
+        visited.add(current_id)
+        trip = db.get(Trip, current_id)
+        if not trip or not trip.parent_id:
+            break
+        rounds += 1
+        current_id = trip.parent_id
+    return rounds
+
+
+def _find_root_parent(db: Session, trip_id: int) -> int:
+    """沿 parent_id 链找到链头（原始行程 ID）。"""
+    visited = set()
+    current_id = trip_id
+    while current_id and current_id not in visited:
+        visited.add(current_id)
+        trip = db.get(Trip, current_id)
+        if not trip or not trip.parent_id:
+            return current_id
+        current_id = trip.parent_id
+    return current_id
+
+
+def _initial_state(user_input: str, db: Session, trip_id: int | None = None) -> dict:
+    """构造 Agent 初始状态。
+
+    首次生成：只传 user_input + profile_departure。
+    修改模式：加载上一轮 Trip 的 preferences/research/itinerary/chat_history，标记 is_modification。
+    """
+    if not trip_id:
+        # ── 首次生成 ──
+        return {"user_input": user_input, "profile_departure": _read_profile_departure(db)}
+
+    # ── 修改模式 ──
+    old_trip = db.get(Trip, trip_id)
+    if not old_trip:
+        raise HTTPException(status_code=404, detail="要修改的行程不存在")
+
+    # 轮数限制：沿链计数
+    rounds = _count_rounds(db, trip_id)
+    if rounds >= MAX_CHAT_ROUNDS:
+        raise HTTPException(status_code=400, detail=f"已达最大修改次数（{MAX_CHAT_ROUNDS}轮），请新建行程")
+
+    # 构造对话历史：旧历史 + 上一轮 assistant 回复 + 本轮 user 输入
+    old_history = old_trip.chat_history or []
+    chat_history = old_history + [
+        {"role": "assistant", "content": (old_trip.itinerary or "")},
+        {"role": "user", "content": user_input},
+    ]
+
+    # parent_id 始终指向链头（原始行程）
+    root_id = _find_root_parent(db, trip_id)
+
+    return {
+        "user_input": user_input,
+        "profile_departure": _read_profile_departure(db),
+        "preferences": old_trip.preferences or {},
+        "research": old_trip.research or {},
+        "previous_itinerary": old_trip.itinerary or "",
+        "chat_history": chat_history,
+        "is_modification": True,
+        "_parent_id": root_id,  # 暂存，落库时用
+        "_chat_history": chat_history,  # 暂存，落库时用
+    }
 
 
 def _save_departure(db: Session, departure: str) -> None:
@@ -63,7 +131,10 @@ def _to_response(trip: Trip) -> TripResponse:
         created_at=trip.created_at.isoformat(),
         usage=trip.usage or {},
         transit=trip.transit or {},
+        transit_error=trip.transit_error or "",
         hotels=trip.hotels or [],
+        chat_history=trip.chat_history or [],
+        parent_id=trip.parent_id,
     )
 
 
@@ -72,7 +143,8 @@ def generate_trip(req: GenerateRequest, db: Session = Depends(get_db)):
     if not req.user_input.strip():
         raise HTTPException(status_code=400, detail="输入不能为空")
 
-    result = agent_graph.invoke(_initial_state(req.user_input, db))
+    init_state = _initial_state(req.user_input, db, req.trip_id)
+    result = agent_graph.invoke(init_state)
 
     trip = Trip(
         user_input=req.user_input,
@@ -81,7 +153,10 @@ def generate_trip(req: GenerateRequest, db: Session = Depends(get_db)):
         itinerary=result.get("itinerary", ""),
         usage=result.get("usage") or {},
         transit=result.get("transit") or {},
+        transit_error=result.get("transit_error") or "",
         hotels=result.get("hotels") or [],
+        parent_id=init_state.get("_parent_id"),
+        chat_history=init_state.get("_chat_history"),
     )
     db.add(trip)
     db.commit()
@@ -96,8 +171,17 @@ async def generate_trip_stream(req: GenerateRequest, db: Session = Depends(get_d
     if not req.user_input.strip():
         raise HTTPException(status_code=400, detail="输入不能为空")
 
+    # 提前校验（_initial_state 可能抛 HTTPException，SSE 里不好抛）
+    if req.trip_id:
+        old_trip = db.get(Trip, req.trip_id)
+        if not old_trip:
+            raise HTTPException(status_code=404, detail="要修改的行程不存在")
+        rounds = _count_rounds(db, req.trip_id)
+        if rounds >= MAX_CHAT_ROUNDS:
+            raise HTTPException(status_code=400, detail=f"已达最大修改次数（{MAX_CHAT_ROUNDS}轮），请新建行程")
+
     async def event_gen():
-        state = _initial_state(req.user_input, db)
+        state = _initial_state(req.user_input, db, req.trip_id)
         try:
             # astream 同时监听节点完成（updates）和节点内自定义事件（custom）
             async for chunk in agent_graph.astream(state, stream_mode=["updates", "custom"]):
@@ -132,7 +216,10 @@ async def generate_trip_stream(req: GenerateRequest, db: Session = Depends(get_d
             itinerary=state.get("itinerary", ""),
             usage=state.get("usage") or {},
             transit=state.get("transit") or {},
+            transit_error=state.get("transit_error") or "",
             hotels=state.get("hotels") or [],
+            parent_id=state.get("_parent_id"),
+            chat_history=state.get("_chat_history"),
         )
         db.add(trip)
         db.commit()

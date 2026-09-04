@@ -77,6 +77,12 @@
         <el-button size="small" type="primary" @click="onSaveDeparture">记住</el-button>
       </div>
 
+      <!-- 交通规划失败提示 -->
+      <div v-if="store.current.transit_error" class="transit-error">
+        <span class="transit-error-ic">⚠️</span>
+        <span>地图路线无法显示：{{ store.current.transit_error }}</span>
+      </div>
+
       <!-- 推荐酒店 -->
       <div v-if="store.current.hotels && store.current.hotels.length > 0" class="hotels-section">
         <h3 class="hotels-title">🏨 推荐酒店</h3>
@@ -103,6 +109,66 @@
           <ResearchPanel v-if="store.current" :research="store.current.research" />
         </el-tab-pane>
       </el-tabs>
+
+      <!-- ── 多轮对话区 ── -->
+      <div class="chat-section">
+        <!-- 对话历史：用户消息气泡 -->
+        <div v-if="userMessages.length" class="chat-history">
+          <div v-for="(msg, i) in userMessages" :key="i" class="chat-bubble-row">
+            <div class="chat-bubble user-bubble">{{ msg }}</div>
+          </div>
+        </div>
+
+        <!-- 加载中提示 -->
+        <div v-if="store.loading" class="chat-loading">
+          <span class="chat-loading-dot"></span>
+          正在调整行程…
+        </div>
+
+        <!-- 推荐提问 -->
+        <div v-if="!store.loading && canModify" class="suggestions">
+          <span class="suggestions-label">💡 推荐提问</span>
+          <div class="suggestions-list">
+            <button
+              v-for="q in suggestedQuestions"
+              :key="q"
+              class="suggestion-chip"
+              type="button"
+              @click="onSuggestionClick(q)"
+            >
+              {{ q }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 输入框 -->
+        <div v-if="canModify" class="chat-input-row">
+          <el-input
+            v-model="modifyInput"
+            size="small"
+            :placeholder="store.loading ? '正在生成中…' : '输入修改意见，如：行程太紧了、不想去浅草寺'"
+            :disabled="store.loading"
+            class="chat-input"
+            @keyup.enter="onModify"
+          />
+          <el-button
+            size="small"
+            type="primary"
+            :disabled="!modifyInput.trim() || store.loading"
+            :loading="store.loading"
+            @click="onModify"
+          >
+            发送
+          </el-button>
+        </div>
+
+        <!-- 轮数耗尽提示 -->
+        <div v-if="roundExhausted" class="chat-exhausted">
+          已达最大修改次数（5轮），请
+          <el-button link type="primary" @click="onRegenerate">重新生成</el-button>
+          新行程
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -118,11 +184,53 @@ import ResearchPanel from '@/components/ResearchPanel.vue'
 import { useTripStore } from '@/store/trip'
 import { renderMarkdown } from '@/utils/markdown'
 
+const MAX_ROUNDS = 5
+
 const store = useTripStore()
 const tab = ref('itinerary')
 const departureInput = ref('')
+const modifyInput = ref('')
 
 const itineraryHtml = computed(() => renderMarkdown(store.current?.itinerary ?? ''))
+
+// 对话历史中用户发的消息（用于气泡展示）
+const userMessages = computed(() => {
+  const history = store.current?.chat_history ?? []
+  return history.filter((m) => m.role === 'user').map((m) => m.content)
+})
+
+// 是否还能修改（轮数未耗尽 且 有当前行程）
+const canModify = computed(() => {
+  return !!store.current && store.chatRound < MAX_ROUNDS
+})
+
+// 轮数是否已耗尽
+const roundExhausted = computed(() => {
+  return !!store.current && store.chatRound >= MAX_ROUNDS
+})
+
+// 根据行程内容动态生成推荐提问
+const suggestedQuestions = computed(() => {
+  const dest = store.current?.preferences?.destination || ''
+  const pace = store.current?.preferences?.pace || '适中'
+  const itinerary = store.current?.itinerary || ''
+  const interests = store.current?.preferences?.interests ?? []
+
+  const questions: string[] = []
+
+  // 节奏相关
+  if (pace !== '轻松') questions.push('行程太紧了，节奏放轻松一点')
+  // 景点相关：从 itinerary 提取第一个 Day 里的景点名
+  const spotMatch = itinerary.match(/[-•]\s*\*?\*?([^*\n]{2,10})\*?\*?\s*[（(]/)
+  if (spotMatch) questions.push(`不想去${spotMatch[1].trim()}，换个地方`)
+  // 兴趣相关
+  if (!interests.includes('美食')) questions.push('多安排一些当地美食')
+  // 通用
+  if (dest) questions.push(`给${dest}加一天行程`)
+  questions.push('住宿推荐换一个区域')
+
+  return questions.slice(0, 4)
+})
 
 // 调试：监听 transit 数据变化
 watch(
@@ -149,6 +257,21 @@ const tokenText = computed(() => {
 
 function onRegenerate() {
   if (store.current) store.generate(store.current.user_input)
+}
+
+async function onModify() {
+  const text = modifyInput.value.trim()
+  if (!text || store.loading) return
+  modifyInput.value = ''
+  await store.modify(text)
+  // 修改完成后滚到顶部看新行程
+  const resultEl = document.querySelector('.result')
+  if (resultEl) resultEl.scrollTop = 0
+}
+
+function onSuggestionClick(question: string) {
+  modifyInput.value = question
+  onModify()
 }
 
 async function onCopy() {
@@ -308,6 +431,24 @@ async function onSaveDeparture() {
   width: 140px;
 }
 
+/* —— 交通规划失败提示 —— */
+.transit-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border: 1px solid #fde68a;
+  border-radius: 12px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+}
+.transit-error-ic {
+  color: #f59e0b;
+  flex: none;
+}
+
 /* —— 推荐酒店 —— */
 .hotels-section {
   margin-bottom: 20px;
@@ -382,5 +523,103 @@ async function onSaveDeparture() {
 }
 .itinerary-md :deep(a:hover) {
   text-decoration: underline;
+}
+
+/* —— 多轮对话区 —— */
+.chat-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.chat-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.chat-bubble-row {
+  display: flex;
+  justify-content: flex-end;
+}
+.chat-bubble {
+  max-width: 80%;
+  padding: 8px 14px;
+  border-radius: 14px 14px 4px 14px;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+.user-bubble {
+  background: #2563eb;
+  color: #fff;
+}
+
+.chat-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 13px;
+  color: #64748b;
+}
+.chat-loading-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2563eb;
+  animation: pulse-dot 1s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* 推荐提问 */
+.suggestions {
+  margin-bottom: 10px;
+}
+.suggestions-label {
+  display: block;
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 6px;
+}
+.suggestions-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.suggestion-chip {
+  appearance: none;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.suggestion-chip:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+  background: #eff6ff;
+}
+
+/* 输入框 */
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.chat-input {
+  flex: 1;
+}
+
+/* 轮数耗尽 */
+.chat-exhausted {
+  padding: 8px 0;
+  font-size: 13px;
+  color: #94a3b8;
 }
 </style>

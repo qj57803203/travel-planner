@@ -1,8 +1,18 @@
-"""组装 LangGraph 编排：抽取 → 搜集 → 生成 → 酒店搜索 → 交通。"""
+"""组装 LangGraph 编排：抽取 → 搜集 → 生成 → 酒店搜索 → 交通。
+
+修改模式下（is_modification=True 且目的地未变），跳过 research 节点直接进 plan。
+"""
 from langgraph.graph import END, START, StateGraph
 
 from app.agent.nodes import extract_preferences, generate_itinerary, hotel_search, plan_transport, research
 from app.agent.state import AgentState
+
+
+def _route_after_extract(state: AgentState) -> str:
+    """extract 之后的条件路由：修改模式且目的地未变时跳过 research。"""
+    if state.get("is_modification") and not state.get("_destination_changed"):
+        return "plan"
+    return "research"
 
 
 def build_graph():
@@ -14,7 +24,8 @@ def build_graph():
     g.add_node("transport", plan_transport)
 
     g.add_edge(START, "extract")
-    g.add_edge("extract", "research")
+    # 条件分支：修改模式跳过 research
+    g.add_conditional_edges("extract", _route_after_extract, {"plan": "plan", "research": "research"})
     g.add_edge("research", "plan")
     g.add_edge("plan", "hotel_search")
     g.add_edge("hotel_search", "transport")
