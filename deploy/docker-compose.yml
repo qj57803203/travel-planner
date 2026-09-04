@@ -1,0 +1,26 @@
+services:
+  # ── 小红书 MCP ──────────────────────────────────────
+  xiaohongshu-mcp:
+    image: crpi-hocnvtkomt7w9v8t.cn-beijing.personal.cr.aliyuncs.com/xpzouying/xiaohongshu-mcp
+    container_name: xiaohongshu-mcp
+    restart: unless-stopped
+    tty: true
+    volumes:
+      - ./xhs/data:/app/data
+    environment:
+      - COOKIES_PATH=/app/data/cookies.json
+      - HOME=/app/data/home
+      - XDG_CONFIG_HOME=/app/data/config
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+    ports:
+      - "127.0.0.1:18060:18060"
+
+  # ── Playwright MCP（携程酒店爬虫）─────────────────────
+  playwright-mcp:
+    image: mcr.microsoft.com/playwright:v1.52.0-noble
+    container_name: playwright-mcp
+    restart: unless-stopped
+    # MCP 服务通过 npx 启动，需要 node 环境
+    command: npx @playwright/mcp --port 18070
+    ports:
+      - "127.0.0.1:18070:18070"

@@ -24,3 +24,7 @@ frontend/vite.config.d.ts
 # 小红书 MCP（含登录 cookie 和二进制，不入库）
 deploy/xhs/data/
 deploy/xhs/bin/
+
+# Playwright MCP（浏览器数据和日志，不入库）
+deploy/playwright/.cache/
+deploy/playwright/.playwright-mcp/

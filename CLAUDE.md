@@ -8,7 +8,7 @@
 |---|---|
 | 前端 | Vue 3 + Vite + TypeScript + Element Plus + Pinia + Axios |
 | 后端 | Python + FastAPI + Pydantic + SQLAlchemy |
-| Agent 编排 | LangChain + LangGraph（抽取 → 搜集 → 生成三步 DAG） |
+| Agent 编排 | LangChain + LangGraph（抽取 → 搜集 → 生成 → 酒店搜索 → 交通五步 DAG） |
 | LLM | DeepSeek（`deepseek-v4-flash`） |
 | 存储 | SQLite（`backend/trips.db`，启动时自动建表） |
 | 数据源 | 预置目的地数据 + 小红书攻略（MCP 实时爬取/缓存） + 高德地图（交通规划） |
@@ -33,6 +33,8 @@ backend/
     tools/
       amap.py            # 高德地图 API 封装（地理编码 / 公交 / 步行 / 驾车）
       xhs_mcp.py         # 小红书攻略采集（MCP 协议，含缓存）
+      ctrip_crawler.py   # 携程酒店爬虫（Chrome MCP，URL 导航 + JS 提取）
+      mcp_client.py      # Chrome MCP 客户端封装（chrome-devtools-mcp）
     routers/
       trips.py           # 行程接口：generate / generate/stream / list / detail
   .env.example           # 环境变量样例（DeepSeek Key / 高德 Key / 小红书配置）
@@ -42,7 +44,8 @@ frontend/
   src/
     views/Home.vue                 # 三段式主页面（输入 | 结果 | 底部操作）
     components/TripForm.vue        # 需求输入区 + 历史记录列表
-    components/ItineraryView.vue   # 结果区：每日行程 / 信息素材 两个 tab
+    components/ItineraryView.vue   # 结果区：每日行程 / 信息素材 两个 tab + 推荐酒店
+    components/HotelCard.vue       # 酒店卡片组件（图片/价格/评分/位置）
     components/ResearchPanel.vue   # 素材展示（酒店/景点/美食/交通折叠面板）
     store/trip.ts                  # Pinia store：状态 + 三个 action
     api/trips.ts                   # axios 封装，调后端接口
@@ -74,20 +77,21 @@ docs/交通规划.md                    # 交通规划逻辑（城际/市内/注
   → generate() 里再调 loadHistory() 刷新左侧历史列表
 ```
 
-### 2. LangGraph 内部：四个节点串行执行
+### 2. LangGraph 内部：五个节点串行执行
 
 `graph.py` 里用 `StateGraph(AgentState)` 组装的 DAG，纯线性无分支：
 
 ```text
-START → extract ──→ research ──→ plan ──→ transport ──→ END
-        (LLM)        (纯代码)      (LLM)      (高德API)
+START → extract ──→ research ──→ plan ──→ hotel_search ──→ transport ──→ END
+        (LLM)        (纯代码)      (LLM)      (携程爬虫)       (高德API)
 ```
 
 | 节点 | 函数 | 干什么 | 关键点 |
 |---|---|---|---|
 | extract | `extract_preferences` | LLM 从自然语言抽取结构化偏好 | `temperature=0.0`；解析失败用默认值兜底，流程不中断 |
 | research | `research` | 预置数据 + 小红书攻略采集 | 先查缓存，未命中则实时爬取；目的地名模糊匹配 |
-| plan | `generate_itinerary` | LLM 根据偏好+素材生成每日行程 | `temperature=0.7`；输出含 days（景点序列）供交通节点使用 |
+| plan | `generate_itinerary` | LLM 根据偏好+素材生成每日行程 | `temperature=0.7`；输出含 days（景点序列）供交通节点使用；**必须输出 accommodation_area（住宿建议）** |
+| hotel_search | `hotel_search` | 根据住宿建议搜索携程酒店 | 从 accommodation_area 提取关键词（如"乐桥站"）；调用 Chrome MCP 爬取携程（URL 导航 + JS 提取）；按性价比排序取前2个；注入行程 |
 | transport | `plan_transport` | 查高德 API 生成真实交通 | 城际交通 + 逐天市内交通；结果注入行程 markdown |
 
 ### 3. AgentState 字段流转
@@ -95,14 +99,16 @@ START → extract ──→ research ──→ plan ──→ transport ──�
 `state.py` 定义的状态，节点通过返回 dict 增量写入下一个节点可读到的字段：
 
 ```text
-user_input ──[extract]──▶ preferences ──[research]──▶ research ──[plan]──▶ itinerary + plan_days ──[transport]──▶ transit + itinerary(注入交通)
+user_input ──[extract]──▶ preferences ──[research]──▶ research ──[plan]──▶ itinerary + plan_days + accommodation_area ──[hotel_search]──▶ hotels + itinerary(注入酒店) ──[transport]──▶ transit + itinerary(注入交通)
 ```
 
 - `user_input`：原始自然语言需求（入口传入）
 - `preferences`：`{destination, days, pace, interests, hotel_preference, departure}`
 - `research`：`{destination, hotels[], attractions[], food[], transport[], xhs_notes[], xhs_status, xhs_error}`
-- `itinerary`：生成的行程文本（含 `## Day 1` 等标题，transport 节点会注入交通段落）
+- `itinerary`：生成的行程文本（含 `## Day 1` 等标题，hotel_search 节点会注入酒店推荐，transport 节点会注入交通段落）
 - `plan_days`：每天景点序列 `[{"day": 1, "spots": ["景点A", "景点B"]}]`，供 transport 节点查高德
+- `accommodation_area`：住宿区域建议（如"地铁1号线/4号线沿线（如乐桥站、临顿路站附近）"），供 hotel_search 节点提取关键词
+- `hotels`：携程酒店搜索结果 `[{name, price, rating, image, url, location}]`，供前端展示酒店卡片
 - `transit`：高德交通结果 `{source, inter_city, days[{day, legs[]}]}`
 - `usage`：各 LLM 节点 token 用量 `{extract: {input, output}, plan: {input, output}}`
 - `error`：出错信息（可选，兜底时写入）
@@ -158,19 +164,38 @@ npm install
 npm run dev    # http://localhost:5173，/api 已代理到 8000
 ```
 
+### Chrome 调试模式（可选，用于携程酒店爬虫）
+
+```bash
+# Windows：启动带调试端口的 Chrome
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222
+
+# macOS
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+
+# Linux
+google-chrome --remote-debugging-port=9222
+```
+
+- 调试端口：http://127.0.0.1:9222（默认，可通过 `CHROME_DEBUG_URL` 配置）
+- 在 `backend/.env` 中配置：`CTRIPE_MCP_URL=1`（非空即启用）
+- 首次运行会通过 npx 自动下载 chrome-devtools-mcp（约 50MB）
+- Chrome MCP 通过 stdio 连接，无需额外服务进程
+
 ## 接口一览
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/generate` | `{ "user_input": "..." }`，跑 Agent 并落库 |
+| POST | `/api/generate` | `{ "user_input": "..." }`，跑 Agent 并落库（含酒店搜索） |
 | GET | `/api/trips` | 历史行程摘要列表 |
-| GET | `/api/trips/{id}` | 单条行程完整详情 |
+| GET | `/api/trips/{id}` | 单条行程完整详情（含 hotels 字段） |
 
 ## 开发约定与注意点
 
 - **LLM 调用只有两处**：`extract`（temperature=0.0，追求稳定抽取）和 `plan`（temperature=0.7，追求多样性）。改提示词去 `prompts.py`，改节点逻辑去 `nodes.py`。
 - **节点间通信只靠 AgentState**：节点函数签名是 `(state: AgentState) -> dict`，返回的 dict 会 merge 进 state，不要用全局变量跨节点传数据。
-- **数据源混合**：预置结构化数据（兜底）+ 小红书攻略（优先，有缓存）+ 高德地图（交通规划）。`research` 节点先查缓存再实时爬取。
+- **数据源混合**：预置结构化数据（兜底）+ 小红书攻略（优先，有缓存）+ 携程酒店（Chrome MCP 爬取）+ 高德地图（交通规划）。`research` 节点先查缓存再实时爬取。
+- **携程酒店爬虫**：`hotel_search` 节点从 `accommodation_area` 提取关键词（如"乐桥站"），通过 Chrome MCP (chrome-devtools-mcp) 爬取携程。流程：① 调携程 API 获取城市 ID（`getHotelKeywords`，有长期缓存）→ ② 拼 URL 直接导航到搜索结果页 → ③ JS 直读 DOM 提取酒店卡片。按性价比排序取前2个注入行程。**前提**：需要启动带 `--remote-debugging-port=9222` 的 Chrome。**缓存机制**：城市 ID 长期缓存（365天），酒店结果一周缓存。
 - **日志级别约定**：业务日志统一用 `logger.info` 或 `logger.warning`，不要用 `logger.debug`（DEBUG 级别日志太多会淹没业务日志）。`main.py` 配置了 `logging.basicConfig(level=logging.DEBUG)`，但 httpcore/httpx 的 DEBUG 日志太多会淹没业务日志，可临时调高其级别：`logging.getLogger("httpcore").setLevel(logging.WARNING)`。
 
 ### 直接操作 SQLite 数据库
@@ -191,7 +216,7 @@ conn.close()
 ```
 
 - 路径：`backend/trips.db`
-- 主表：`trips`（行程）、`xhs_note_cache`（小红书缓存）、`user_profiles`（用户偏好）
+- 主表：`trips`（行程）、`xhs_note_cache`（小红书缓存）、`ctrip_hotel_cache`（携程酒店缓存）、`ctrip_city_cache`（携程城市 ID 缓存）、`user_profiles`（用户偏好）
 
 ## 踩坑记录
 
