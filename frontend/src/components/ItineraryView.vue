@@ -77,6 +77,18 @@
         <el-button size="small" type="primary" @click="onSaveDeparture">记住</el-button>
       </div>
 
+      <!-- 推荐酒店 -->
+      <div v-if="store.current.hotels && store.current.hotels.length > 0" class="hotels-section">
+        <h3 class="hotels-title">🏨 推荐酒店</h3>
+        <div class="hotels-list">
+          <HotelCard
+            v-for="hotel in store.current.hotels"
+            :key="hotel.name"
+            :hotel="hotel"
+          />
+        </div>
+      </div>
+
       <el-tabs v-model="tab" class="tabs">
         <el-tab-pane label="每日行程" name="itinerary">
           <div
@@ -100,6 +112,7 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import GenerateProgress from '@/components/GenerateProgress.vue'
+import HotelCard from '@/components/HotelCard.vue'
 import Icon from '@/components/Icon.vue'
 import ResearchPanel from '@/components/ResearchPanel.vue'
 import { useTripStore } from '@/store/trip'
@@ -293,6 +306,30 @@ async function onSaveDeparture() {
 }
 .departure-input {
   width: 140px;
+}
+
+/* —— 推荐酒店 —— */
+.hotels-section {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 16px;
+  color: #fff;
+}
+
+.hotels-title {
+  margin: 0 0 16px;
+  font-size: 18px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hotels-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* —— Markdown 渲染的行程 —— */

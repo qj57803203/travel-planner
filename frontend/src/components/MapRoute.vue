@@ -2,7 +2,7 @@
   <div class="map-wrap">
     <!-- 交通方式提示 -->
     <div v-if="transit?.transport_mode" class="transport-info">
-      <span class="transport-mode">{{ transportModeText }}</span>
+      <span class="transport-mode">✨</span>
       <span v-if="transit?.transport_reason" class="transport-reason">{{ transit.transport_reason }}</span>
     </div>
     <div v-if="!hasData" class="map-empty">
@@ -11,7 +11,8 @@
     </div>
     <div v-else-if="loadError" class="map-empty">
       <Icon name="map" :size="36" />
-      <p>地图加载失败，请检查高德 key / 安全密钥是否正确配置</p>
+      <p>地图加载失败，可能是网络波动，请稍后重试</p>
+      <button class="retry-btn" @click="retryLoad">🔄 重新加载</button>
     </div>
     <div v-show="hasData && !loadError" ref="mapEl" class="map-canvas"></div>
   </div>
@@ -275,11 +276,23 @@ async function render() {
 
     map.setFitView(null, false, [60, 60, 60, 60])
     console.groupEnd()
-  } catch (e) {
-    console.error('[MapRoute] ❌ 高德地图加载/渲染失败', e)
+  } catch (e: any) {
+    // 区分 SDK 加载失败和地图渲染失败
+    if (e?.type === 'error' || e?.message?.includes('load')) {
+      console.error('[MapRoute] ❌ 高德 JS SDK 加载失败，检查网络或 key 配置', e)
+    } else {
+      console.error('[MapRoute] ❌ 地图渲染异常', e?.message ?? e, e?.stack ?? '')
+    }
     loadError.value = true
     console.groupEnd()
   }
+}
+
+function retryLoad() {
+  loadError.value = false
+  // 清除已缓存的 AMap 实例，下次重新加载 SDK
+  amapPromise = null
+  render()
 }
 
 watch(() => props.transit, () => render())
@@ -319,6 +332,23 @@ onBeforeUnmount(() => {
   font-size: 13.5px;
   max-width: 280px;
   text-align: center;
+}
+
+.retry-btn {
+  margin-top: 8px;
+  padding: 8px 20px;
+  font-size: 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.retry-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
 }
 .transport-info {
   display: flex;

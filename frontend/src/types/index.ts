@@ -9,9 +9,11 @@ export interface Preference {
 
 export interface Hotel {
   name: string
-  price: string
-  rating: string
+  price: number
+  rating: number
   location: string
+  image: string
+  url: string
   pros: string[]
   cons: string[]
 }
@@ -105,6 +107,7 @@ export interface Trip {
   created_at: string
   usage?: { extract?: TokenUsage; plan?: TokenUsage }
   transit?: TransitInfo
+  hotels?: Hotel[]
 }
 
 export interface TripSummary {
@@ -114,7 +117,7 @@ export interface TripSummary {
   created_at: string
 }
 
-export type StageKey = 'extract' | 'research' | 'plan' | 'transport'
+export type StageKey = 'extract' | 'research' | 'plan' | 'hotel_search' | 'transport'
 export type StageStatus = 'pending' | 'running' | 'done'
 
 export interface StreamEvent {

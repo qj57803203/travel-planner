@@ -69,8 +69,10 @@ export const useTripStore = defineStore('trip', () => {
   async function loadHistory() {
     try {
       history.value = await api.listTrips()
-    } catch {
-      // 历史加载失败不阻塞主流程
+    } catch (e: unknown) {
+      // 历史加载失败不阻塞主流程，但提示用户
+      const err = e as { message?: string }
+      error.value = err?.message || '加载历史记录失败'
     }
   }
 

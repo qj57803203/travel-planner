@@ -1,6 +1,27 @@
 <template>
   <div class="form-card">
     <div class="form-row">
+      <div class="input-col">
+        <el-input
+          v-model="input"
+          type="textarea"
+          :rows="3"
+          resize="none"
+          class="textarea"
+          placeholder="描述你的旅行想法，例如：9 月去东京玩 5 天，喜欢美食和拍照，不想太累"
+        />
+        <div class="presets">
+          <button
+            v-for="p in presets"
+            :key="p.label"
+            class="preset"
+            type="button"
+            @click="input = p.text"
+          >
+            {{ p.label }}
+          </button>
+        </div>
+      </div>
       <div class="action-col">
         <div class="departure-field">
           <label class="departure-label">
@@ -23,27 +44,6 @@
           <Icon v-if="!store.loading" name="sparkles" :size="16" />
           <span>{{ store.loading ? "正在规划…" : "生成行程" }}</span>
         </el-button>
-      </div>
-      <div class="input-col">
-        <el-input
-          v-model="input"
-          type="textarea"
-          :rows="3"
-          resize="none"
-          class="textarea"
-          placeholder="描述你的旅行想法，例如：9 月去东京玩 5 天，喜欢美食和拍照，不想太累"
-        />
-        <div class="presets">
-          <button
-            v-for="p in presets"
-            :key="p.label"
-            class="preset"
-            type="button"
-            @click="input = p.text"
-          >
-            {{ p.label }}
-          </button>
-        </div>
       </div>
     </div>
   </div>
