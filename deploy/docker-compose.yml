@@ -1,4 +1,51 @@
 services:
+  # ── 后端 FastAPI ──────────────────────────────────────
+  backend:
+    build:
+      context: ../backend
+      dockerfile: ../deploy/Dockerfile.backend
+    container_name: travel-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # SQLite 持久化（数据库文件不能丢）
+      - ./data/trips.db:/app/trips.db
+      # 小红书 cookies（后端需要读取登录态判断是否启用）
+      - ./xhs/data:/app/xhs_data
+    env_file:
+      - ./backend.env
+    environment:
+      # 服务发现（Docker 内部网络）
+      - XHS_MCP_URL=http://xiaohongshu-mcp:18060/mcp
+      - CTRIPE_MCP_URL=1  # 非空即启用携程爬虫
+      - CHROME_DEBUG_URL=http://chrome:9222
+    depends_on:
+      - xiaohongshu-mcp
+      - chrome
+    networks:
+      - app-net
+
+  # ── 前端（Nginx 托管）──────────────────────────────────
+  frontend:
+    image: nginx:alpine
+    container_name: travel-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      # - "443:443"  # HTTPS 时取消注释
+    volumes:
+      # 前端构建产物（需要先 npm run build）
+      - ../frontend/dist:/usr/share/nginx/html:ro
+      # Nginx 配置（反向代理）
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # HTTPS 证书（如果有的话）
+      # - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - backend
+    networks:
+      - app-net
+
   # ── 小红书 MCP ──────────────────────────────────────
   xiaohongshu-mcp:
     image: crpi-hocnvtkomt7w9v8t.cn-beijing.personal.cr.aliyuncs.com/xpzouying/xiaohongshu-mcp
@@ -6,21 +53,47 @@ services:
     restart: unless-stopped
     tty: true
     volumes:
+      # 持久化 cookies 和运行数据
       - ./xhs/data:/app/data
     environment:
       - COOKIES_PATH=/app/data/cookies.json
       - HOME=/app/data/home
       - XDG_CONFIG_HOME=/app/data/config
-      - AUTH_TOKEN=${AUTH_TOKEN:-}
-    ports:
-      - "127.0.0.1:18060:18060"
+    # 内部端口，不暴露到宿主机
+    expose:
+      - "18060"
+    networks:
+      - app-net
 
-  # ── Playwright MCP（携程酒店爬虫）─────────────────────
-  playwright-mcp:
-    image: mcr.microsoft.com/playwright:v1.52.0-noble
-    container_name: playwright-mcp
+  # ── Chrome（携程爬虫用）───────────────────────────────
+  chrome:
+    image: chromedp/headless-shell:latest
+    container_name: travel-chrome
     restart: unless-stopped
-    # MCP 服务通过 npx 启动，需要 node 环境
-    command: npx @playwright/mcp --port 18070
+    # 暴露调试端口给后端的 chrome-devtools-mcp 连接
+    expose:
+      - "9222"
+    networks:
+      - app-net
+
+  # ── 小红书登录浏览器（按需启动）────────────────────────
+  # 仅在需要登录小红书时启动
+  # 启动: docker compose --profile login up -d xhs-browser
+  # 访问: http://your-server-ip:6080
+  xhs-browser:
+    image: dorowu/ubuntu-desktop-lxde-vnc:latest
+    container_name: xhs-browser
+    profiles:
+      - login  # 默认不启动
     ports:
-      - "127.0.0.1:18070:18070"
+      - "6080:80"  # noVNC Web 界面
+    volumes:
+      - ./xhs/browser-data:/root
+    environment:
+      - VNC_PASSWORD=${VNC_PASSWORD:-xhs123}
+    networks:
+      - app-net
+
+networks:
+  app-net:
+    driver: bridge
