@@ -8,7 +8,8 @@
           :rows="3"
           resize="none"
           class="textarea"
-          placeholder="描述你的旅行想法，例如：9 月去东京玩 5 天，喜欢美食和拍照，不想太累"
+          placeholder="描述你的旅行想法，例如：9 月去成都玩 4 天，喜欢美食和拍照，不想太累"
+          @keydown.enter.exact.prevent="onGenerate"
         />
         <div class="presets">
           <button
@@ -62,16 +63,16 @@ const departure = ref("");
 
 const presets = [
   {
-    label: "东京 · 美食拍照",
-    text: "9 月去东京玩 5 天，喜欢美食和拍照，不想太累，酒店想靠近地铁",
+    label: "成都 · 美食休闲",
+    text: "9 月去成都玩 4 天，喜欢火锅和串串，想去宽窄巷子和大熊猫基地，不想太累",
   },
   {
-    label: "大阪 · 亲子轻松",
-    text: "带娃去大阪玩 3 天，节奏轻松一点，想去环球影城，住市中心",
+    label: "西安 · 历史文化",
+    text: "带家人去西安玩 3 天，想看兵马俑和古城墙，节奏轻松，住回民街附近",
   },
   {
-    label: "巴黎 · 艺术浪漫",
-    text: "11 月去巴黎玩 4 天，喜欢博物馆和艺术，慢节奏，想吃法餐",
+    label: "大理 · 文艺慢游",
+    text: "10 月去大理玩 5 天，喜欢拍照和咖啡，想去洱海和古城，慢节奏",
   },
 ];
 

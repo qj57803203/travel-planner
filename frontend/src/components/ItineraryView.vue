@@ -14,7 +14,7 @@
     <template v-else>
       <div class="result-head">
         <div class="result-title">
-          <h2>{{ store.current.preferences.destination || '我的行程' }}</h2>
+          <h2>{{ store.current.preferences.destination + '行程详情' }}</h2>
           <div class="chips">
             <span class="chip chip-days">
               <Icon name="calendar" :size="13" />{{ store.current.preferences.days }} 天
@@ -84,7 +84,7 @@
       </div>
 
       <!-- 推荐酒店 -->
-      <div v-if="store.current.hotels && store.current.hotels.length > 0" class="hotels-section">
+      <!-- <div v-if="store.current.hotels && store.current.hotels.length > 0" class="hotels-section">
         <h3 class="hotels-title">🏨 推荐酒店</h3>
         <div class="hotels-list">
           <HotelCard
@@ -93,7 +93,7 @@
             :hotel="hotel"
           />
         </div>
-      </div>
+      </div> -->
 
       <el-tabs v-model="tab" class="tabs">
         <el-tab-pane label="每日行程" name="itinerary">
@@ -127,7 +127,7 @@
 
         <!-- 推荐提问 -->
         <div v-if="!store.loading && canModify" class="suggestions">
-          <span class="suggestions-label">💡 推荐提问</span>
+          <span class="suggestions-label">💡 继续提问</span>
           <div class="suggestions-list">
             <button
               v-for="q in suggestedQuestions"
@@ -150,16 +150,17 @@
             :disabled="store.loading"
             class="chat-input"
             @keyup.enter="onModify"
-          />
-          <el-button
-            size="small"
-            type="primary"
-            :disabled="!modifyInput.trim() || store.loading"
-            :loading="store.loading"
-            @click="onModify"
           >
-            发送
-          </el-button>
+            <template #suffix>
+              <Icon
+                name="send"
+                :size="16"
+                class="send-icon"
+                :class="{ disabled: !modifyInput.trim() || store.loading }"
+                @click="onModify"
+              />
+            </template>
+          </el-input>
         </div>
 
         <!-- 轮数耗尽提示 -->
@@ -525,11 +526,22 @@ async function onSaveDeparture() {
   text-decoration: underline;
 }
 
-/* —— 多轮对话区 —— */
+/* —— 多轮对话区（吸底） —— */
 .chat-section {
+  position: sticky;
+  bottom: 0;
   margin-top: 20px;
-  padding-top: 16px;
+  padding: 16px 0 12px;
+  background: #fff;
   border-top: 1px solid #e2e8f0;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.06);
+  /* 抵消父容器 padding，让横线和背景撑满 */
+  margin-left: -20px;
+  margin-right: -20px;
+  padding-left: 20px;
+  padding-right: 20px;
+  /* 底部圆角 */
+  border-radius: 0 0 18px 18px;
 }
 
 .chat-history {
@@ -580,7 +592,7 @@ async function onSaveDeparture() {
 }
 .suggestions-label {
   display: block;
-  font-size: 12px;
+  font-size: 16px;
   color: #94a3b8;
   margin-bottom: 6px;
 }
@@ -606,14 +618,32 @@ async function onSaveDeparture() {
   background: #eff6ff;
 }
 
-/* 输入框 */
+
 .chat-input-row {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
+  max-width: 100%;
 }
-.chat-input {
-  flex: 1;
+.chat-input :deep(.el-input__wrapper) {
+  border-radius: 20px;
+  padding: 4px 16px;
+  min-height: 40px;
+  font-size: 14px;
+}
+
+/* 发送图标 */
+.send-icon {
+  cursor: pointer;
+  color: #2563eb;
+  transition: color 0.15s, opacity 0.15s;
+}
+.send-icon:hover {
+  color: #1d4ed8;
+}
+.send-icon.disabled {
+  color: #cbd5e1;
+  pointer-events: none;
 }
 
 /* 轮数耗尽 */

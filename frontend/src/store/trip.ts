@@ -5,10 +5,12 @@ import * as api from '@/api/trips'
 import type { StageKey, StageStatus, Trip, TripSummary, XhsNote } from '@/types'
 
 // 流程步骤（与后端节点顺序一致），label 用于进度条展示
+// 注意：修改模式下 research 会被跳过，由 generate/modify 中的逻辑自动标记为 done
 export const STAGES: { key: StageKey; label: string }[] = [
-  { key: 'extract', label: '抽取偏好' },
+  { key: 'extract', label: '理解需求' },
   { key: 'research', label: '搜集信息' },
   { key: 'plan', label: '生成行程' },
+  { key: 'hotel_search', label: '搜索酒店' },
   { key: 'transport', label: '规划交通' },
 ]
 
@@ -21,6 +23,7 @@ export const useTripStore = defineStore('trip', () => {
     extract: 'pending',
     research: 'pending',
     plan: 'pending',
+    hotel_search: 'pending',
     transport: 'pending',
   })
   // 实时爬取到的小红书笔记（生成过程中逐个追加，带动画展示）
@@ -33,8 +36,24 @@ export const useTripStore = defineStore('trip', () => {
   })
 
   function resetStages() {
-    stages.value = { extract: 'pending', research: 'pending', plan: 'pending', transport: 'pending' }
+    stages.value = { extract: 'pending', research: 'pending', plan: 'pending', hotel_search: 'pending', transport: 'pending' }
     xhsNotes.value = []
+  }
+
+  /** 标记某阶段完成，并自动补齐被跳过的中间阶段（修改模式下 research 会被跳过） */
+  function markStageDone(stage: StageKey) {
+    stages.value[stage] = 'done'
+    // 自动补齐：如果该阶段之前的某个阶段还是 pending，标记为 done（说明被后端跳过了）
+    const idx = STAGES.findIndex((s) => s.key === stage)
+    for (let i = 0; i < idx; i++) {
+      const prev = STAGES[i].key
+      if (stages.value[prev] === 'pending') {
+        stages.value[prev] = 'done'
+      }
+    }
+    // 线性流程：把下一步标记为进行中
+    const next = STAGES[idx + 1]
+    if (next) stages.value[next.key] = 'running'
   }
 
   async function generate(input: string) {
@@ -45,10 +64,7 @@ export const useTripStore = defineStore('trip', () => {
     try {
       current.value = await api.generateTripStream(input, (e) => {
         if (e.type === 'stage' && e.stage) {
-          stages.value[e.stage] = 'done'
-          // 线性流程：把下一步标记为进行中
-          const next = STAGES.findIndex((s) => s.key === e.stage) + 1
-          if (STAGES[next]) stages.value[STAGES[next].key] = 'running'
+          markStageDone(e.stage)
         } else if (e.type === 'xhs_note') {
           xhsNotes.value.push({
             title: e.title || '',
@@ -81,9 +97,7 @@ export const useTripStore = defineStore('trip', () => {
     try {
       current.value = await api.generateTripStream(input, (e) => {
         if (e.type === 'stage' && e.stage) {
-          stages.value[e.stage] = 'done'
-          const next = STAGES.findIndex((s) => s.key === e.stage) + 1
-          if (STAGES[next]) stages.value[STAGES[next].key] = 'running'
+          markStageDone(e.stage)
         } else if (e.type === 'xhs_note') {
           // 修改模式通常跳过 research，但兼容处理
           xhsNotes.value.push({

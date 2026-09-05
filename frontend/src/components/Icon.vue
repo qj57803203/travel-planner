@@ -26,6 +26,7 @@ const ICONS: Record<string, string> = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.9 4.9 1.4 1.4"/><path d="m17.7 17.7 1.4 1.4"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.3 17.7-1.4 1.4"/><path d="m19.1 4.9-1.4 1.4"/>',
   book: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4z"/><path d="m22 2-11 11"/>',
 }
 
 const inner = computed(() => ICONS[props.name] ?? ICONS.compass)

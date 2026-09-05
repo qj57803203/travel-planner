@@ -191,7 +191,11 @@ async function render() {
       map.destroy()
       map = null
     }
-    map = new AMap.Map(mapEl.value, { zoom: 12 })
+    // 使用 light 精简样式：底图颜色变浅、POI 减少，路线更醒目
+    map = new AMap.Map(mapEl.value, {
+      zoom: 12,
+      mapStyle: 'amap://styles/light',
+    })
 
     // 景点标记：实心圆点（颜色跟路线一致）+ 名称文字
     const markers = collectMarkers()
