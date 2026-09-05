@@ -1,13 +1,7 @@
 <template>
   <div class="research">
     <!-- 数据来源状态提示 -->
-    <div v-if="research.xhs_status === 'fallback'" class="notice notice-fallback">
-      <Icon name="book" :size="16" />
-      <div class="notice-body">
-        <strong>本次使用兜底数据</strong>
-        <p v-if="research.xhs_error">{{ research.xhs_error }}</p>
-        <p v-else>小红书未抓到笔记，以下为预置示例素材。</p>
-      </div>
+    <!-- <div v-if="research.xhs_status === 'fallback'" class="notice notice-fallback">
     </div>
     <div v-else-if="research.xhs_status === 'cached'" class="notice notice-cached">
       <Icon name="clock" :size="16" />
@@ -15,7 +9,7 @@
         <strong>笔记来自一周内缓存</strong>
         <p>近期爬过该目的地，直接复用。</p>
       </div>
-    </div>
+    </div> -->
 
 
     <!-- 小红书攻略 -->

@@ -144,7 +144,14 @@ def generate_trip(req: GenerateRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="输入不能为空")
 
     init_state = _initial_state(req.user_input, db, req.trip_id)
-    result = agent_graph.invoke(init_state)
+    try:
+        result = agent_graph.invoke(init_state)
+    except Exception as e:
+        logger.error("generate_trip 异常: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="抱歉，这个问题目前超出了我的能力范围。我会持续学习，争取下次更快帮到您！",
+        )
 
     trip = Trip(
         user_input=req.user_input,
@@ -206,7 +213,7 @@ async def generate_trip_stream(req: GenerateRequest, db: Session = Depends(get_d
                     yield _sse(data)
         except Exception as e:
             logger.exception("generate_trip_stream 异常详情：")
-            yield _sse({"type": "error", "message": f"LLM返回失败: {e}"})
+            yield _sse({"type": "error", "message": "抱歉，这个问题目前超出了我的能力范围。我会持续学习，争取下次更快帮到您！"})
             return
 
         trip = Trip(

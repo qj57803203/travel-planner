@@ -10,7 +10,6 @@ from langchain_deepseek import ChatDeepSeek
 from app.agent.prompts import EXTRACT_PROMPT, MODIFY_EXTRACT_PROMPT, MODIFY_PLAN_PROMPT, PLAN_PROMPT
 from app.agent.state import AgentState
 from app.config import settings
-from app.data.destinations import 兜底数据
 from app.database import SessionLocal
 from app.models import XhsNoteCache
 from app.tools import amap, xhs_mcp
@@ -164,10 +163,9 @@ def extract_preferences(state: AgentState) -> dict:
             if not (prefs.get("departure") or "").strip():
                 prefs["departure"] = (state.get("profile_departure") or "").strip()
             return {"preferences": prefs, "usage": {"extract": usage}}
-    except Exception as e:  # 抽取失败时用默认值兜底，让流程继续
+    except Exception as e:
         logger.error("extract_preferences 异常: %s", e, exc_info=True)
-        fallback = state.get("preferences", DEFAULT_PREFERENCES.copy()) if is_mod else DEFAULT_PREFERENCES.copy()
-        return {"preferences": fallback, "error": f"偏好抽取失败: {e}"}
+        raise
 
 
 def research(state: AgentState) -> dict:
@@ -190,21 +188,12 @@ def research(state: AgentState) -> dict:
     prefs = state.get("preferences", {})
     dest = (prefs.get("destination") or "").strip()
 
-    # 1. 匹配预置的四类结构化数据（小红书不可用时的兜底，也作为补充）
-    data = 兜底数据.get(dest)
-    if data is None:
-        # 模糊匹配：目的地名互为包含关系
-        for key, value in 兜底数据.items():
-            if key in dest or dest in key:
-                dest, data = key, value
-                break
-
     research_info = {
         "destination": dest,
-        "hotels": (data or {}).get("hotels", []),
-        "attractions": (data or {}).get("attractions", []),
-        "food": (data or {}).get("food", []),
-        "transport": (data or {}).get("transport", []),
+        "hotels": [],
+        "attractions": [],
+        "food": [],
+        "transport": [],
         "xhs_notes": [],
         "xhs_status": "",   # live / cached / fallback；空 = 未启用小红书
         "xhs_error": "",    # 失败原因（如 ConnectError: ...），供前端透出
@@ -356,23 +345,20 @@ def generate_itinerary(state: AgentState) -> dict:
             xhs_notes=_format_xhs_notes(research.get("xhs_notes", [])),
         )
 
-    try:
-        resp = llm.invoke(prompt)
-        usage = _usage(resp)
-        logger.info("plan 消耗 token：input=%s output=%s", usage["input"], usage["output"])
-        usage_map = state.get("usage", {})
-        usage_map["plan"] = usage
-        markdown, days, transport_mode, transport_reason, accommodation_area = _parse_plan(resp.content)
-        return {
-            "itinerary": markdown,
-            "plan_days": days,
-            "transport_mode": transport_mode,
-            "transport_reason": transport_reason,
-            "accommodation_area": accommodation_area,
-            "usage": usage_map,
-        }
-    except Exception as e:
-        return {"itinerary": "", "error": f"行程生成失败: {e}"}
+    resp = llm.invoke(prompt)
+    usage = _usage(resp)
+    logger.info("plan 消耗 token：input=%s output=%s", usage["input"], usage["output"])
+    usage_map = state.get("usage", {})
+    usage_map["plan"] = usage
+    markdown, days, transport_mode, transport_reason, accommodation_area = _parse_plan(resp.content)
+    return {
+        "itinerary": markdown,
+        "plan_days": days,
+        "transport_mode": transport_mode,
+        "transport_reason": transport_reason,
+        "accommodation_area": accommodation_area,
+        "usage": usage_map,
+    }
 
 
 def _parse_plan(content: str) -> tuple[str, list, str, str]:
@@ -469,12 +455,12 @@ def _parse_plan(content: str) -> tuple[str, list, str, str]:
         except Exception as e:  # noqa: BLE001
             logger.warning("_parse_plan: 正则挽救后 json.loads 失败 — %s", e)
 
-    # ── 第 3 步：完全失败，返回原始内容 ──
+    # ── 第 3 步：完全失败，抛出异常 ──
     logger.error(
-        "_parse_plan: 所有策略均失败，返回原始内容作为 itinerary（长度=%d，前 200 字符）：\n%s",
+        "_parse_plan: 所有策略均失败（长度=%d，前 200 字符）：\n%s",
         len(content), content[:200],
     )
-    return content, [], "", "", ""
+    raise ValueError("行程解析失败：LLM 输出格式不符合预期")
 
 
 def hotel_search(state: AgentState) -> dict:

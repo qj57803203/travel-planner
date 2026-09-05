@@ -41,12 +41,6 @@
             >
               <Icon name="clock" :size="13" />缓存数据
             </span>
-            <span
-              v-else-if="store.current.research.xhs_status === 'fallback'"
-              class="chip chip-fallback"
-            >
-              <Icon name="book" :size="13" />兜底数据
-            </span>
             <span v-if="tokenText" class="chip chip-token">{{ tokenText }}</span>
           </div>
         </div>
