@@ -47,16 +47,6 @@ const emptyText = computed(() => {
   return '暂无路线数据'
 })
 
-const transportModeText = computed(() => {
-  const mode = props.transit?.transport_mode
-  const modeMap: Record<string, string> = {
-    driving: '🚗 驾车',
-    train: '🚄 高铁/火车',
-    flight: '✈️ 飞机',
-  }
-  return modeMap[mode || ''] || '🚗 驾车'
-})
-
 // 每天的颜色（最多支持 10 天，循环使用）
 const DAY_COLORS = [
   '#2563eb', // 蓝

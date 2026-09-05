@@ -173,7 +173,6 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import GenerateProgress from '@/components/GenerateProgress.vue'
-import HotelCard from '@/components/HotelCard.vue'
 import Icon from '@/components/Icon.vue'
 import ResearchPanel from '@/components/ResearchPanel.vue'
 import { useTripStore } from '@/store/trip'
