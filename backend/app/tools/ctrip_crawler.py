@@ -2,7 +2,6 @@
 
 新方案（2026-09-04 重写）：
 - 不再模拟输入/点击，直接拼 URL 导航到搜索结果页
-- 城市 ID 通过携程 getHotelKeywords API 获取（在页面上下文调 fetch）
 - 酒店数据用 JS 直读 DOM 提取（.list-item 选择器），比正则解析 HTML 稳定
 - 城市 ID 长期缓存 + 酒店搜索结果一周缓存
 
@@ -89,47 +88,29 @@ def _load_city_cache(city_name: str) -> int | None:
     return None
 
 
-def _save_city_cache(city_name: str, city_id: int) -> None:
-    """缓存城市 ID（幂等写入）。"""
-    try:
-        with SessionLocal() as db:
-            existing = db.query(CtripCityCache).filter(CtripCityCache.city_name == city_name).first()
-            if existing:
-                existing.city_id = city_id
-            else:
-                db.add(CtripCityCache(city_name=city_name, city_id=city_id))
-            db.commit()
-    except Exception:
-        logger.warning("写入携程城市缓存失败：%s", city_name, exc_info=True)
 
 
 async def _resolve_city_id(chrome, city: str) -> int | None:
-    """解析城市名→携程数字 ID。先查缓存，未命中则调 API。"""
+    """解析城市名→携程数字 ID"""
     # 1. 查缓存
     cached = _load_city_cache(city)
     if cached is not None:
-        logger.info("携程城市 ID 缓存命中：%s → %d", city, cached)
         return cached
 
-    # 2. 打开携程页面（需要在携程页面上下文才能调 fetch）
-    page = await chrome.call("navigate_page", {"url": "https://hotels.ctrip.com/hotels/listPage?city=2"})
-    # navigate_page 不返回有效内容，只确保页面加载
-    await asyncio.sleep(2)
+    # # 2. 打开携程页面（需要在携程页面上下文才能调 fetch）
+    # page = await chrome.call("navigate_page", {"url": "https://hotels.ctrip.com/hotels/listPage?city=2"})
+    # # navigate_page 不返回有效内容，只确保页面加载
+    # await asyncio.sleep(2)
 
-    # 3. 在页面上下文调 getHotelKeywords API
-    try:
-        raw = await chrome.call("evaluate_script", {"function": _city_suggest_js(city)})
-        val = _decode_eval(raw)
-        if isinstance(val, dict) and isinstance(val.get("id"), int):
-            city_id = val["id"]
-            _save_city_cache(city, city_id)
-            logger.info("携程城市 ID 解析成功：%s → %d", city, city_id)
-            return city_id
-        logger.warning("携程城市 ID 解析失败：返回值=%s", raw[:200])
-        return None
-    except Exception as e:
-        logger.warning("携程城市 ID 解析异常：%s", e, exc_info=True)
-        return None
+    # # 3. 在页面上下文调 getHotelKeywords API
+    # try:
+    #     raw = await chrome.call("evaluate_script", {"function": _city_suggest_js(city)})
+    #     val = _decode_eval(raw)
+    #     logger.warning("携程城市 ID 解析失败：返回值=%s", raw[:200])
+    #     return None
+    # except Exception as e:
+    #     logger.warning("携程城市 ID 解析异常：%s", e, exc_info=True)
+    #     return None
 
 
 # ============================================================
@@ -431,7 +412,7 @@ async def _crawl_hotels(destination: str, keyword: str, limit: int) -> tuple[lis
         await chrome.call("navigate_page", {"url": "https://www.ctrip.com"})
         await asyncio.sleep(2)
 
-        # 2. 解析城市 ID（先查缓存，未命中调 API）
+        # 2. 解析城市 ID
         city_id = await _resolve_city_id(chrome, destination)
         if not city_id:
             logger.warning("携程城市 ID 解析失败，跳过酒店搜索：%s", destination)
@@ -446,14 +427,14 @@ async def _crawl_hotels(destination: str, keyword: str, limit: int) -> tuple[lis
             f"&searchWord={quote(keyword)}"
         )
 
-        # 4. 优先通过 getAdHotels API 获取酒店列表
-        hotels = await _extract_hotels_via_api(chrome, city_id, keyword)
-        if hotels:
-            logger.info("携程酒店 API 获取成功：%s %s，共 %d 条", destination, keyword, len(hotels))
-            return hotels[:limit], search_url
+        # # 4. 优先通过 getAdHotels API 获取酒店列表
+        # hotels = await _extract_hotels_via_api(chrome, city_id, keyword)
+        # if hotels:
+        #     logger.info("携程酒店 API 获取成功：%s %s，共 %d 条", destination, keyword, len(hotels))
+        #     return hotels[:limit], search_url
 
-        # 5. API 失败，回退到 DOM 提取方案
-        logger.info("API 获取失败，回退到 DOM 提取方案")
+        # # 5. API 失败，回退到 DOM 提取方案
+        # logger.info("API 获取失败，回退到 DOM 提取方案")
         logger.info("携程酒店搜索 URL: %s", search_url)
         await chrome.call("navigate_page", {"url": search_url})
         await asyncio.sleep(3)

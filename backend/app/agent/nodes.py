@@ -343,7 +343,7 @@ def generate_itinerary(state: AgentState) -> dict:
             research=json.dumps(structured, ensure_ascii=False, indent=2),
             xhs_notes=_format_xhs_notes(research.get("xhs_notes", [])),
             chat_history=_format_chat_history(chat_history),
-            previous_itinerary=previous_itinerary[:3000],  # 截断避免 token 溢出
+            previous_itinerary=_strip_injected_blocks(previous_itinerary)[:3000],  # 剥离旧的注入内容（酒店+交通），避免重复
         )
         logger.info("generate_itinerary: 修改模式，使用 MODIFY_PLAN_PROMPT")
     else:
@@ -594,6 +594,9 @@ def _format_hotel_block(hotels: list[dict]) -> str:
 
 def _inject_hotels(itinerary: str, accommodation_area: str, hotel_block: str) -> str:
     """将酒店推荐注入到行程的住宿建议后面。"""
+    # 先清理残留的注入内容（酒店+交通），避免重复
+    itinerary = _strip_injected_blocks(itinerary)
+
     # 查找"住宿建议"所在行
     lines = itinerary.split('\n')
     new_lines = []
@@ -664,39 +667,62 @@ def plan_transport(state: AgentState) -> dict:
     logger.info("plan_transport: 开始 — destination='%s', departure='%s', days=%d, transport_mode=%s",
                 destination, departure, len(days), transport_mode)
 
+    # 检测国外目的地：高德地图只支持中国境内
+    # 国外目的地跳过所有高德路线规划，只给文字提示
+    foreign_cities = {"东京", "大阪", "巴黎", "伦敦", "纽约", "首尔", "曼谷", "新加坡", "悉尼", "迪拜", "罗马", "巴塞罗那", "洛杉矶", "旧金山", "温哥华", "墨尔本", "吉隆坡", "马尔代夫", "普吉岛", "巴厘岛"}
+    is_foreign_dest = destination in foreign_cities
+    is_foreign_dep = departure in foreign_cities
+
     # 1. 城际交通（出发地 ≠ 目的地且都非空）
     inter_city = None
     if departure and departure != destination:
-        dep_geo = amap.geocode(departure)
-        dst_geo = amap.geocode(destination)
-        if dep_geo and dst_geo:
-            # 根据 LLM 建议的交通方式选择路线查询
-            if transport_mode == "train":
-                # 高铁：查铁路路线
-                r = amap.railway_route(dep_geo["lnglat"], dst_geo["lnglat"], departure, destination)
-                if r is None:
-                    # 查不到铁路，降级为驾车
+        # 如果出发地或目的地是国外，跳过高德路线规划
+        if is_foreign_dest or is_foreign_dep:
+            logger.info("plan_transport: 出发地或目的地为国外，跳过高德城际路线规划")
+            # 根据 LLM 建议的交通方式给出文字提示
+            mode_name = {"driving": "驾车", "train": "高铁/火车", "flight": "飞机"}.get(transport_mode, "飞机")
+            inter_city = {
+                "from": departure,
+                "to": destination,
+                "transport_mode": transport_mode,
+                "transport_reason": transport_reason,
+                "mode": mode_name,
+                "summary": f"建议乘坐{mode_name}从 {departure} 到 {destination}",
+                "duration_min": 0,
+                "distance_m": 0,
+                "polyline": [],
+            }
+        else:
+            dep_geo = amap.geocode(departure)
+            dst_geo = amap.geocode(destination)
+            if dep_geo and dst_geo:
+                # 根据 LLM 建议的交通方式选择路线查询
+                if transport_mode == "train":
+                    # 高铁：查铁路路线
+                    r = amap.railway_route(dep_geo["lnglat"], dst_geo["lnglat"], departure, destination)
+                    if r is None:
+                        # 查不到铁路，降级为驾车
+                        r = amap.driving_route(dep_geo["lnglat"], dst_geo["lnglat"])
+                elif transport_mode == "flight":
+                    # 飞机：高德不支持航班查询，给文字提示
+                    r = {
+                        "mode": "飞机",
+                        "summary": f"建议乘坐飞机从 {departure} 到 {destination}",
+                        "duration_min": 0,
+                        "distance_m": 0,
+                        "polyline": [],
+                    }
+                else:
+                    # 驾车（默认）
                     r = amap.driving_route(dep_geo["lnglat"], dst_geo["lnglat"])
-            elif transport_mode == "flight":
-                # 飞机：高德不支持航班查询，给文字提示
-                r = {
-                    "mode": "飞机",
-                    "summary": f"建议乘坐飞机从 {departure} 到 {destination}",
-                    "duration_min": 0,
-                    "distance_m": 0,
-                    "polyline": [],
-                }
-            else:
-                # 驾车（默认）
-                r = amap.driving_route(dep_geo["lnglat"], dst_geo["lnglat"])
-            if r:
-                inter_city = {
-                    "from": departure,
-                    "to": destination,
-                    "transport_mode": transport_mode,
-                    "transport_reason": transport_reason,
-                    **r,
-                }
+                if r:
+                    inter_city = {
+                        "from": departure,
+                        "to": destination,
+                        "transport_mode": transport_mode,
+                        "transport_reason": transport_reason,
+                        **r,
+                    }
 
     # 2. 逐天逐站查交通（任何一天有景点编码失败 → 整体不返回交通）
     transit_days = []
@@ -761,6 +787,14 @@ def _build_legs(spots: list, city: str) -> tuple[list[dict], str]:
         (legs, error) — legs 为路段列表，error 为失败原因（空串=成功）。
         任何景点地理编码失败时，error 非空，legs 为空列表（不返回不完整的交通）。
     """
+    # 检测国外目的地：高德地图地理编码 API 只支持中国境内地名
+    # 对于国外地名（如日本大阪），高德会错误返回中国境内坐标，导致路线画在中国
+    # 因此检测到国外目的地时，直接跳过，给出文字提示
+    foreign_cities = {"东京", "大阪", "巴黎", "伦敦", "纽约", "首尔", "曼谷", "新加坡", "悉尼", "迪拜", "罗马", "巴塞罗那", "洛杉矶", "旧金山", "温哥华", "墨尔本", "吉隆坡", "马尔代夫", "普吉岛", "巴厘岛"}
+    if city in foreign_cities:
+        logger.info("_build_legs: 检测到国外目的地 '%s'，跳过高德地理编码", city)
+        return [], f"国外目的地（{city}）暂不支持高德地图路线规划"
+
     # 1. 批量地理编码
     coords: dict[str, dict] = {}
     for name in spots:
@@ -862,6 +896,54 @@ def _format_leg_line(leg: dict) -> str:
         return f"{emoji} {summary} · {duration}分钟"
 
 
+def _strip_injected_blocks(itinerary: str) -> str:
+    """剥离行程中所有代码注入的内容（酒店推荐 + 交通信息），返回干净的 LLM 原始行程。
+
+    二次对话时 previous_itinerary 已包含注入内容，LLM 可能原样保留，
+    再叠加新一轮注入就会重复。本函数在两个时机调用：
+    1. generate_itinerary 传给 LLM 前（让 LLM 只看到干净行程）
+    2. _inject_hotels / _inject_transit 注入前（清除残留，避免重复）
+
+    清理目标：
+    - 酒店推荐块：**🏨 推荐酒店** 标题 + 下方 `- **酒店名**` 列表项
+    - 城际交通块：**🚗 城际交通** 标题 + 下方列表项（含 💡 提示行）
+    - 市内交通行：🚶 步行 / 🚇 地铁 / 🚗 驾车 / 🚌 公交 等交通段落
+    """
+    import re
+    lines = itinerary.split('\n')
+    cleaned = []
+    skip_block = False  # 跳过城际交通/酒店推荐的多行块
+
+    for line in lines:
+        stripped = line.strip()
+
+        # ── 城际交通标题行：**🚗/🚄/✈️ 城际交通（...）** ──
+        if re.match(r'\*\*[🚗🚄✈️🚌]\s*城际交通', stripped):
+            skip_block = True
+            continue
+
+        # ── 酒店推荐标题行：**🏨 推荐酒店** ──
+        if re.match(r'\*\*🏨\s*推荐酒店', stripped):
+            skip_block = True
+            continue
+
+        # ── 多行块内的内容（城际交通/酒店推荐的列表项和空行） ──
+        if skip_block:
+            if stripped == '' or stripped.startswith('- '):
+                continue  # 空行或列表项，继续跳过
+            else:
+                skip_block = False  # 遇到非空非列表行，结束跳过
+
+        # ── 市内交通行：以交通 emoji 开头的行 ──
+        # 匹配：🚶 步行 365m · 5分钟 / 🚇 地铁 · 15分钟 / 🚗 驾车 3km · 10分钟
+        if re.match(r'-?\s*[🚶🚇🚗🚌]\s*(步行|地铁|驾车|公交)', stripped):
+            continue
+
+        cleaned.append(line)
+
+    return '\n'.join(cleaned)
+
+
 def _inject_transit(itinerary: str, transit: dict) -> str:
     """把城际出发 + 每天交通注入正文，交通信息穿插在景点之间。
 
@@ -874,6 +956,9 @@ def _inject_transit(itinerary: str, transit: dict) -> str:
     """
     if not itinerary:
         return itinerary
+
+    # 先清理残留的注入内容（酒店+交通），避免重复
+    itinerary = _strip_injected_blocks(itinerary)
 
     # 预处理每天的交通 legs
     day_legs: dict[int, list] = {}
