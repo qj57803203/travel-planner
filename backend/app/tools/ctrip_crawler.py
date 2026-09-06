@@ -32,16 +32,6 @@ def enabled() -> bool:
 
 
 # ============================================================
-# Chrome MCP 连接（简化版，每次搜索新建连接，用完关闭）
-# ============================================================
-
-async def _get_chrome() -> "ChromeMCP":
-    """创建 Chrome MCP 连接。"""
-    from app.tools.mcp_client import ChromeMCP
-    return ChromeMCP()
-
-
-# ============================================================
 # 城市 ID 解析（参考 browser_tool.py 的 _city_suggest_js）
 # ============================================================
 
@@ -91,26 +81,8 @@ def _load_city_cache(city_name: str) -> int | None:
 
 
 async def _resolve_city_id(chrome, city: str) -> int | None:
-    """解析城市名→携程数字 ID"""
-    # 1. 查缓存
-    cached = _load_city_cache(city)
-    if cached is not None:
-        return cached
-
-    # # 2. 打开携程页面（需要在携程页面上下文才能调 fetch）
-    # page = await chrome.call("navigate_page", {"url": "https://hotels.ctrip.com/hotels/listPage?city=2"})
-    # # navigate_page 不返回有效内容，只确保页面加载
-    # await asyncio.sleep(2)
-
-    # # 3. 在页面上下文调 getHotelKeywords API
-    # try:
-    #     raw = await chrome.call("evaluate_script", {"function": _city_suggest_js(city)})
-    #     val = _decode_eval(raw)
-    #     logger.warning("携程城市 ID 解析失败：返回值=%s", raw[:200])
-    #     return None
-    # except Exception as e:
-    #     logger.warning("携程城市 ID 解析异常：%s", e, exc_info=True)
-    #     return None
+    """从 SQLite 缓存查携程城市 ID（所有城市已预置，无需调接口）。"""
+    return _load_city_cache(city)
 
 
 # ============================================================

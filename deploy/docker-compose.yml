@@ -19,7 +19,8 @@ services:
       # 服务发现（Docker 内部网络）
       - XHS_MCP_URL=http://xiaohongshu-mcp:18060/mcp
       - CTRIPE_MCP_URL=1  # 非空即启用携程爬虫
-      - CHROME_DEBUG_URL=http://chrome:9222
+      - CHROME_DEBUG_URL=http://chrome:9222  # Docker 内 headless Chrome
+      - REMOTE_BROWSER=1  # 标记为远程浏览器（超时时杀 Chrome 等 Docker 重启）
     depends_on:
       - xiaohongshu-mcp
       - chrome

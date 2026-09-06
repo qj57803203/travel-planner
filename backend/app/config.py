@@ -27,6 +27,11 @@ class Settings(BaseSettings):
 
     # Chrome MCP 调试端口（chrome-devtools-mcp 连接用）
     chrome_debug_url: str = "http://127.0.0.1:9222"
+    # Chrome 可执行文件路径：指定时 MCP 自己拉起 headless 浏览器（本地开发用）；
+    # 留空时连接 chrome_debug_url 指向的常驻 Chrome（服务器部署用）
+    chrome_executable: str = ""
+    # 是否为远程常驻浏览器（影响自愈策略：True 时超时会杀 Chrome 等 Docker 重启）
+    remote_browser: bool = False
 
 
 settings = Settings()
