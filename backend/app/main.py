@@ -44,7 +44,13 @@ app = FastAPI(title="旅行规划 Agent", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://118.89.71.196:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,3 +62,10 @@ app.include_router(trips.router)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时清理 Playwright 连接。"""
+    from app.tools.chrome_manager import close
+    await close()

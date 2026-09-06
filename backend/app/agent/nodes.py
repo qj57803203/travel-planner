@@ -13,6 +13,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import XhsNoteCache
 from app.tools import amap, xhs_mcp
+from app.tools import xhs_browser
 
 DEFAULT_PREFERENCES = {
     "destination": "",
@@ -200,7 +201,8 @@ def research(state: AgentState) -> dict:
     }
 
     # 2. 小红书笔记 —— 先查一周内目的地缓存，命中秒回；未命中才实时爬取并写缓存
-    if xhs_mcp.enabled() and dest:
+    #    优先用浏览器方案（Playwright CDP，不需要 MCP 容器），MCP 作为 fallback
+    if dest:
         cached = _load_xhs_cache(dest)
         if cached:
             research_info["xhs_notes"] = cached
@@ -209,10 +211,24 @@ def research(state: AgentState) -> dict:
             interests = " ".join((prefs.get("interests") or [])[:2])
             query = f"{dest} 旅游攻略{' ' + interests if interests else ''}"
             writer = _stream_writer()
-            notes, err = xhs_mcp.collect_xhs_sources_sync(
-                query,
-                on_note=lambda i, note: _emit_xhs_note(writer, i, note),
-            )
+
+            # 优先浏览器方案
+            notes, err = [], ""
+            if xhs_browser.enabled():
+                logger.info("小红书：使用浏览器方案")
+                notes, err = xhs_browser.collect_xhs_sources_sync(
+                    query,
+                    on_note=lambda i, note: _emit_xhs_note(writer, i, note),
+                )
+
+            # 浏览器方案失败 → MCP fallback
+            if not notes and xhs_mcp.enabled():
+                logger.info("小红书：浏览器方案无结果，尝试 MCP fallback")
+                notes, err = xhs_mcp.collect_xhs_sources_sync(
+                    query,
+                    on_note=lambda i, note: _emit_xhs_note(writer, i, note),
+                )
+
             research_info["xhs_notes"] = notes
             _save_xhs_cache(dest, notes)
             if notes:

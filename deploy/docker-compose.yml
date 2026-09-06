@@ -1,95 +1,83 @@
 services:
+  # ── Chrome（小红书 + 携程共用）──────────────────────────
+  # 后端通过 network_mode 共享此容器的网络，直连 localhost:9223
+  chrome:
+    image: chromedp/headless-shell:latest
+    container_name: travel-chrome
+    restart: unless-stopped
+    # 端口由后端容器通过共享网络暴露，这里不需要 expose/ports
+    networks:
+      - app-net
+
   # ── 后端 FastAPI ──────────────────────────────────────
+  # 共享 Chrome 容器的网络命名空间，可直连 localhost:9223
   backend:
     build:
       context: ../backend
       dockerfile: ../deploy/Dockerfile.backend
     container_name: travel-backend
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    # 共享 Chrome 的网络命名空间
+    network_mode: "service:chrome"
     volumes:
-      # SQLite 持久化（数据库文件不能丢）
       - ./data/trips.db:/app/trips.db
-      # 小红书 cookies（后端需要读取登录态判断是否启用）
       - ./xhs/data:/app/xhs_data
     env_file:
       - ./backend.env
     environment:
-      # 服务发现（Docker 内部网络）
-      - XHS_MCP_URL=http://xiaohongshu-mcp:18060/mcp
-      - CTRIPE_MCP_URL=1  # 非空即启用携程爬虫
-      - CHROME_DEBUG_URL=http://chrome:9222  # Docker 内 headless Chrome
-      - REMOTE_BROWSER=1  # 标记为远程浏览器（超时时杀 Chrome 等 Docker 重启）
+      # 直连 Chrome 的 localhost:9223（因为共享网络命名空间）
+      - CHROME_DEBUG_URL=http://127.0.0.1:9223
+      - REMOTE_BROWSER=1
     depends_on:
-      - xiaohongshu-mcp
       - chrome
-    networks:
-      - app-net
 
   # ── 前端（Nginx 托管）──────────────────────────────────
+  # 反向代理 API 到后端：通过 Chrome 容器名 + 8000 端口访问（共享网络）
   frontend:
     image: nginx:alpine
     container_name: travel-frontend
     restart: unless-stopped
     ports:
       - "80:80"
-      # - "443:443"  # HTTPS 时取消注释
     volumes:
-      # 前端构建产物（需要先 npm run build）
       - ../frontend/dist:/usr/share/nginx/html:ro
-      # Nginx 配置（反向代理）
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      # HTTPS 证书（如果有的话）
-      # - ./certs:/etc/nginx/certs:ro
     depends_on:
-      - backend
+      - chrome  # 后端在 Chrome 的网络里，前端通过 Chrome 容器名访问
     networks:
       - app-net
 
-  # ── 小红书 MCP ──────────────────────────────────────
+  # ── 小红书 MCP（可选，仅作为 fallback）────────────────────
   xiaohongshu-mcp:
     image: crpi-hocnvtkomt7w9v8t.cn-beijing.personal.cr.aliyuncs.com/xpzouying/xiaohongshu-mcp
     container_name: xiaohongshu-mcp
+    profiles:
+      - mcp
     restart: unless-stopped
     tty: true
     volumes:
-      # 持久化 cookies 和运行数据
       - ./xhs/data:/app/data
     environment:
       - COOKIES_PATH=/app/data/cookies.json
       - HOME=/app/data/home
       - XDG_CONFIG_HOME=/app/data/config
-    # 内部端口，不暴露到宿主机
     expose:
       - "18060"
     networks:
       - app-net
 
-  # ── Chrome（携程爬虫用）───────────────────────────────
-  chrome:
-    image: chromedp/headless-shell:latest
-    container_name: travel-chrome
-    restart: unless-stopped
-    # 暴露调试端口给后端的 chrome-devtools-mcp 连接
-    expose:
-      - "9222"
-    networks:
-      - app-net
-
   # ── 小红书登录浏览器（按需启动）────────────────────────
-  # 仅在需要登录小红书时启动
-  # 启动: docker compose --profile login up -d xhs-browser
-  # 访问: http://your-server-ip:6080
   xhs-browser:
     image: dorowu/ubuntu-desktop-lxde-vnc:latest
     container_name: xhs-browser
     profiles:
-      - login  # 默认不启动
+      - login
     ports:
-      - "6080:80"  # noVNC Web 界面
+      - "6080:80"
     volumes:
       - ./xhs/browser-data:/root
+      - ./xhs/data:/app/xhs_data
+      - ../backend/app/tools/xhs_login.py:/app/xhs_login.py:ro
     environment:
       - VNC_PASSWORD=${VNC_PASSWORD:-xhs123}
     networks:
