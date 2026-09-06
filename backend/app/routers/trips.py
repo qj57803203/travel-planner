@@ -268,3 +268,111 @@ def get_profile(db: Session = Depends(get_db)):
 def save_profile(req: ProfileUpdate, db: Session = Depends(get_db)):
     _save_departure(db, req.departure)
     return ProfileResponse(departure=_read_profile_departure(db))
+
+
+@router.get("/xhs-cookies")
+def get_xhs_cookies_status():
+    """查询小红书 Cookie 配置状态。"""
+    from pathlib import Path
+
+    cookies_path = Path("/app/xhs_data/cookies.json")
+    if not cookies_path.exists():
+        return {"has_cookies": False, "cookie_count": 0, "source": "未配置"}
+
+    try:
+        data = json.loads(cookies_path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            count = len(data)
+            source = "JSON 数组"
+        elif isinstance(data, dict) and "cookies" in data:
+            count = len(data["cookies"])
+            source = "MCP 格式"
+        else:
+            count = 0
+            source = "格式未知"
+        return {"has_cookies": count > 0, "cookie_count": count, "source": source}
+    except Exception:
+        return {"has_cookies": False, "cookie_count": 0, "source": "文件损坏"}
+
+
+@router.post("/xhs-cookies")
+def save_xhs_cookies(body: dict):
+    """保存小红书 Cookie。
+
+    支持两种格式：
+    1. 纯字符串：{"cookies": "name1=value1; name2=value2; ..."}
+    2. JSON 数组：{"cookies": [{"name": "...", "value": "...", "domain": ".xiaohongshu.com"}, ...]}
+    """
+    from pathlib import Path
+
+    cookies_path = Path("/app/xhs_data/cookies.json")
+    cookies_path.parent.mkdir(parents=True, exist_ok=True)
+
+    raw = body.get("cookies", "")
+    if not raw:
+        raise HTTPException(status_code=400, detail="cookies 字段不能为空")
+
+    # 解析 cookie 字符串 → Playwright 格式的数组
+    if isinstance(raw, str):
+        # 格式：name1=value1; name2=value2
+        cookies = []
+        for pair in raw.split(";"):
+            pair = pair.strip()
+            if "=" in pair:
+                name, value = pair.split("=", 1)
+                cookies.append({
+                    "name": name.strip(),
+                    "value": value.strip(),
+                    "domain": ".xiaohongshu.com",
+                    "path": "/",
+                })
+        if not cookies:
+            raise HTTPException(status_code=400, detail="无法解析 Cookie 字符串，请确认格式正确")
+    elif isinstance(raw, list):
+        cookies = raw
+    else:
+        raise HTTPException(status_code=400, detail="cookies 字段格式错误，应为字符串或数组")
+
+    # 保存为 Playwright 可直接加载的格式
+    cookies_path.write_text(json.dumps(cookies, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("小红书 cookies 已保存到 %s，共 %d 个 cookie", cookies_path, len(cookies))
+
+    return {"message": "Cookie 保存成功，下次搜索时自动生效", "count": len(cookies)}
+
+
+# ============================================================
+# 小红书登录截图（Phase：登录墙远程接管）
+# ============================================================
+
+# 全局变量：存储当前登录页截图的 base64 数据
+_xhs_login_screenshot: str = ""
+_xhs_login_waiting: bool = False
+
+
+@router.get("/xhs-login-screenshot")
+def get_xhs_login_screenshot():
+    """获取小红书登录页的实时截图（前端轮询用）。
+
+    返回 JPEG 图片，前端 <img> 标签直接加载。
+    未在等待登录时返回 404。
+    """
+    from fastapi.responses import Response
+    import base64
+
+    if not _xhs_login_waiting or not _xhs_login_screenshot:
+        raise HTTPException(status_code=404, detail="当前未在等待登录")
+
+    try:
+        image_data = base64.b64decode(_xhs_login_screenshot)
+        return Response(content=image_data, media_type="image/jpeg")
+    except Exception:
+        raise HTTPException(status_code=500, detail="截图数据异常")
+
+
+@router.get("/xhs-login-status")
+def get_xhs_login_status():
+    """查询小红书登录等待状态。"""
+    return {
+        "waiting": _xhs_login_waiting,
+        "has_screenshot": bool(_xhs_login_screenshot),
+    }
