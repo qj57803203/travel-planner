@@ -1,12 +1,13 @@
-"""携程酒店爬虫 —— 通过 Chrome MCP (chrome-devtools-mcp) 爬取携程酒店列表。
+"""携程酒店爬虫 —— 通过 Playwright CDP 直连 Chrome 爬取携程酒店列表。
 
-新方案（2026-09-04 重写）：
-- 不再模拟输入/点击，直接拼 URL 导航到搜索结果页
-- 酒店数据用 JS 直读 DOM 提取（.list-item 选择器），比正则解析 HTML 稳定
+方案演进：
+- v1: Chrome MCP (chrome-devtools-mcp) → stdio spawn npx，链路长不稳定
+- v2: Playwright CDP 直连 Docker 内常驻 Chrome，去掉 MCP 中间层
+- 爬取策略：拼 URL 导航到搜索结果页 → JS 直读 DOM 提取酒店卡片
 - 城市 ID 长期缓存 + 酒店搜索结果一周缓存
 
 设计约束：
-- CTRIPE_MCP_URL 未配置 → enabled()=False，调用方跳过；
+- Chrome 不可用（chrome_debug_url 未配置或不可达）→ enabled()=False，调用方跳过；
 - 一切失败（超时 / 页面异常 / 结构变化）→ 返回空列表，绝不阻塞主流程；
 """
 
@@ -27,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 
 def enabled() -> bool:
-    """携程爬虫是否启用（需要配置 CTRIPE_MCP_URL 非空）。"""
-    return bool(settings.ctrip_mcp_url)
+    """携程爬虫是否启用（Chrome 可用即启用）。"""
+    return bool(settings.chrome_debug_url)
 
 
 # ============================================================
@@ -78,11 +79,41 @@ def _load_city_cache(city_name: str) -> int | None:
     return None
 
 
+def _save_city_cache(city_name: str, city_id: int) -> None:
+    """将城市 ID 写入缓存。"""
+    try:
+        with SessionLocal() as db:
+            # 检查是否已存在（避免重复插入）
+            existing = (
+                db.query(CtripCityCache)
+                .filter(CtripCityCache.city_name == city_name)
+                .first()
+            )
+            if existing:
+                return
+            db.add(CtripCityCache(city_name=city_name, city_id=city_id))
+            db.commit()
+            logger.info("携程城市 ID 已缓存：%s → %d", city_name, city_id)
+    except Exception:
+        logger.warning("写入携程城市缓存失败：%s", city_name, exc_info=True)
 
 
-async def _resolve_city_id(chrome, city: str) -> int | None:
-    """从 SQLite 缓存查携程城市 ID（所有城市已预置，无需调接口）。"""
-    return _load_city_cache(city)
+
+
+async def _resolve_city_id(city: str, page=None) -> int | None:
+    """解析携程城市 ID：查缓存返回。
+
+    城市 ID 需要预先在数据库中配置好（ctrip_city_cache 表），
+    未命中时返回 None，不会自动调 API。
+    """
+    # 1. 先查缓存
+    cached = _load_city_cache(city)
+    if cached:
+        return cached
+
+    # 2. 缓存未命中
+    logger.warning("携程城市缓存未命中：%s", city)
+    return None
 
 
 # ============================================================
@@ -150,9 +181,9 @@ CTRIP_CARDS_JS = r"""
 """
 
 
-def _parse_api_response(raw_json: str) -> list[dict]:
-    """解析 getAdHotels API 返回的酒店数据。"""
-    val = _decode_eval(raw_json)
+def _parse_api_response(raw_json) -> list[dict]:
+    """解析 getAdHotels API 返回的酒店数据。兼容 Playwright 直接返回 dict 和 MCP 返回字符串。"""
+    val = raw_json if isinstance(raw_json, (dict, list)) else _decode_eval(raw_json)
     if not isinstance(val, dict):
         logger.warning("getAdHotels API 返回格式异常: %s", str(val)[:200])
         return []
@@ -206,9 +237,9 @@ def _parse_api_response(raw_json: str) -> list[dict]:
     return hotels
 
 
-def _parse_cards(raw_json: str) -> list[dict]:
-    """解析 JS 提取的酒店卡片数据（备用方案），转为标准格式。"""
-    val = _decode_eval(raw_json)
+def _parse_cards(raw_json) -> list[dict]:
+    """解析 JS 提取的酒店卡片数据（备用方案），转为标准格式。兼容 Playwright 直接返回列表。"""
+    val = raw_json if isinstance(raw_json, list) else _decode_eval(raw_json)
     if not isinstance(val, list):
         return []
 
@@ -245,12 +276,12 @@ def _parse_cards(raw_json: str) -> list[dict]:
     return hotels
 
 
-async def _extract_hotels_via_api(chrome, city_id: int, keyword: str) -> list[dict]:
-    """通过 getAdHotels API 获取酒店列表（含 hotelId）。"""
+async def _extract_hotels_via_api(page, city_id: int, keyword: str) -> list[dict]:
+    """通过 getAdHotels API 获取酒店列表（Playwright 版）。"""
     try:
         js_code = _get_hotels_js(city_id, keyword)
-        raw = await chrome.call("evaluate_script", {"function": js_code})
-        hotels = _parse_api_response(raw)
+        raw = await page.evaluate(js_code)
+        hotels = _parse_api_response(raw if isinstance(raw, str) else json.dumps(raw))
         if hotels:
             logger.info("getAdHotels API 获取成功：%d 条", len(hotels))
             return hotels
@@ -261,14 +292,14 @@ async def _extract_hotels_via_api(chrome, city_id: int, keyword: str) -> list[di
         return []
 
 
-async def _extract_hotels_with_retry(chrome, attempts: int = 5) -> list[dict]:
-    """轮询等待酒店卡片渲染并提取（备用方案）。拿不到 ≥2 张卡时重试。"""
+async def _extract_hotels_with_retry(page, attempts: int = 5) -> list[dict]:
+    """轮询等待酒店卡片渲染并提取（Playwright 版）。拿不到 ≥2 张卡时重试。"""
     for attempt in range(attempts):
         if attempt:
             await asyncio.sleep(2.5)  # 等待异步渲染
         try:
-            raw = await chrome.call("evaluate_script", {"function": CTRIP_CARDS_JS})
-            hotels = _parse_cards(raw)
+            raw = await page.evaluate(CTRIP_CARDS_JS)
+            hotels = _parse_cards(raw if isinstance(raw, str) else json.dumps(raw))
             if len(hotels) >= 2:
                 return hotels
             logger.info("携程酒店提取：%d 条（第 %d 次尝试），继续等待...", len(hotels), attempt + 1)
@@ -276,8 +307,8 @@ async def _extract_hotels_with_retry(chrome, attempts: int = 5) -> list[dict]:
             logger.info("携程酒店提取失败（第 %d 次尝试），继续...", attempt + 1, exc_info=True)
     # 最后一次尝试，有多少返回多少
     try:
-        raw = await chrome.call("evaluate_script", {"function": CTRIP_CARDS_JS})
-        return _parse_cards(raw)
+        raw = await page.evaluate(CTRIP_CARDS_JS)
+        return _parse_cards(raw if isinstance(raw, str) else json.dumps(raw))
     except Exception:
         return []
 
@@ -372,20 +403,20 @@ def _save_hotel_cache(destination: str, keyword: str, hotels: list[dict], list_p
 # ============================================================
 
 async def _crawl_hotels(destination: str, keyword: str, limit: int) -> tuple[list[dict], str]:
-    """实时爬取携程酒店：解析 city_id → 调用 API 获取酒店列表。
+    """实时爬取携程酒店：解析 city_id → 调用 API 获取酒店列表（CDP 版）。
 
     Returns:
         (hotels, list_page_url) — hotels 为酒店列表，list_page_url 为携程列表页链接
     """
-    from app.tools.mcp_client import ChromeMCP
+    from app.tools.chrome_manager import get_chrome_page
 
-    async with ChromeMCP() as chrome:
+    async with get_chrome_page(timeout_s=90) as page:
         # 1. 先访问携程首页，建立正常浏览上下文
-        await chrome.call("navigate_page", {"url": "https://www.ctrip.com"})
+        await page.goto("https://www.ctrip.com", wait_until="load", timeout=20000)
         await asyncio.sleep(2)
 
-        # 2. 解析城市 ID
-        city_id = await _resolve_city_id(chrome, destination)
+        # 2. 解析城市 ID（先查缓存，缓存未命中则调携程 API）
+        city_id = await _resolve_city_id(destination, page=page)
         if not city_id:
             logger.warning("携程城市 ID 解析失败，跳过酒店搜索：%s", destination)
             return [], ""
@@ -399,19 +430,11 @@ async def _crawl_hotels(destination: str, keyword: str, limit: int) -> tuple[lis
             f"&searchWord={quote(keyword)}"
         )
 
-        # # 4. 优先通过 getAdHotels API 获取酒店列表
-        # hotels = await _extract_hotels_via_api(chrome, city_id, keyword)
-        # if hotels:
-        #     logger.info("携程酒店 API 获取成功：%s %s，共 %d 条", destination, keyword, len(hotels))
-        #     return hotels[:limit], search_url
-
-        # # 5. API 失败，回退到 DOM 提取方案
-        # logger.info("API 获取失败，回退到 DOM 提取方案")
         logger.info("携程酒店搜索 URL: %s", search_url)
-        await chrome.call("navigate_page", {"url": search_url})
+        await page.goto(search_url, wait_until="load", timeout=30000)
         await asyncio.sleep(3)
 
-        hotels = await _extract_hotels_with_retry(chrome, attempts=5)
+        hotels = await _extract_hotels_with_retry(page, attempts=5)
         logger.info("携程酒店提取完成：%s %s，共 %d 条", destination, keyword, len(hotels))
 
         return hotels[:limit], search_url
