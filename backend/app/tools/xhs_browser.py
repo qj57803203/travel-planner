@@ -178,46 +178,50 @@ async def _search_and_extract(query: str, limit: int) -> tuple[list[dict], str]:
         async with get_chrome_page(timeout_s=90) as page:
             logger.info("[%.1fs] Chrome 页面获取成功", time.time() - start_time)
 
-            # 1. 加载 cookies（通过 CDP Network.setCookie）
+            # 1. 先导航到空白页重置状态（复用的标签页可能已有状态，导致 cookie 设置失败）
+            #    2026-09 实测：直接在已有页面上 Network.setCookie 会失败
+            await page.goto("about:blank", wait_until="domcontentloaded", timeout=10000)
+            logger.info("[%.1fs] 已重置到空白页", time.time() - start_time)
+
+            # 2. 加载 cookies（通过 CDP Network.setCookie）
             cookies = _load_cookies()
             if cookies:
                 try:
                     await page._send("Network.enable")
+                    set_count = 0
                     for c in cookies:
-                        await page._send("Network.setCookie", {
-                            "name": c.get("name", ""),
-                            "value": c.get("value", ""),
-                            "domain": c.get("domain", ".xiaohongshu.com"),
-                            "path": c.get("path", "/"),
-                        })
-                    logger.info("已加载 %d 个小红书 cookie", len(cookies))
+                        try:
+                            await page._send("Network.setCookie", {
+                                "name": c.get("name", ""),
+                                "value": c.get("value", ""),
+                                "domain": c.get("domain", ".xiaohongshu.com"),
+                                "path": c.get("path", "/"),
+                            })
+                            set_count += 1
+                        except Exception as ce:
+                            logger.debug("设置 cookie %s 失败: %s", c.get("name", ""), ce)
+                    logger.info("已设置 %d/%d 个小红书 cookie", set_count, len(cookies))
                 except Exception as e:
-                    logger.warning("加载 cookies 失败：%s", e)
+                    logger.warning("加载 cookies 失败：%s: %s", type(e).__name__, e)
+            else:
+                logger.warning("未找到小红书 cookie，搜索可能需要登录")
 
-            # 2. 访问小红书搜索页
+            # 3. 访问小红书搜索页
             search_url = f"https://www.xiaohongshu.com/search_result?keyword={query}&source=web_search_result_notes"
             logger.info("[%.1fs] 访问小红书搜索页：%s", time.time() - start_time, search_url)
-            # 使用 domcontentloaded 而非 load，小红书动态内容多，完全加载太慢
             await page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
             logger.info("[%.1fs] 搜索页加载完成", time.time() - start_time)
             # 等待 SPA 渲染（小红书搜索结果是动态加载的，需要足够时间）
             # 2026-09 实测：5s 有时不够，8s 较稳定
             await asyncio.sleep(8)
 
-            # 调试：抓取页面内容，检查是否被风控
+            # 检查页面状态（简洁日志，不再打印大段 HTML）
             try:
-                page_html = await page.content()
                 page_title = await page.evaluate("document.title")
-                logger.info("[%.1fs] 页面标题: %s", time.time() - start_time, page_title)
-                logger.info("[%.1fs] 页面HTML长度: %d 字符", time.time() - start_time, len(page_html))
-                # 打印前2000字符，看看返回了什么
-                logger.info("===== 页面内容前2000字符 =====\n%s\n===========================", page_html[:2000])
-                # 保存完整页面到临时文件
-                with open("/tmp/xhs_debug.html", "w", encoding="utf-8") as f:
-                    f.write(page_html)
-                logger.info("[%.1fs] 完整页面已保存到 /tmp/xhs_debug.html", time.time() - start_time)
+                page_url = await page.evaluate("location.href")
+                logger.info("[%.1fs] 页面标题: %s, URL: %s", time.time() - start_time, page_title, page_url[:100])
             except Exception as e:
-                logger.warning("抓取页面内容失败：%s", e)
+                logger.warning("获取页面信息失败：%s", e)
 
             # 3. 提取搜索结果
             # 2026-09 实测验证：小红书搜索结果卡片是 section.note-item，
