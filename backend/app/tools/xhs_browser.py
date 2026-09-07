@@ -193,8 +193,9 @@ async def _search_and_extract(query: str, limit: int) -> tuple[list[dict], str]:
             # 2. 访问小红书搜索页
             search_url = f"https://www.xiaohongshu.com/search_result?keyword={query}&source=web_search_result_notes"
             logger.info("访问小红书搜索页：%s", search_url)
-            await page.goto(search_url, wait_until="load", timeout=30000)
-            await asyncio.sleep(3)  # 等待动态内容渲染
+            # 使用 domcontentloaded 而非 load，小红书动态内容多，完全加载太慢
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
+            await asyncio.sleep(5)  # 等待动态内容渲染（小红书 SPA 需要更多时间）
 
             # 3. 提取搜索结果
             # 小红书搜索结果的常见选择器（可能需要根据实际情况调整）
@@ -289,8 +290,9 @@ async def _search_and_extract(query: str, limit: int) -> tuple[list[dict], str]:
                     detail_url = note_url(item["note_id"])
                     logger.info("  [%d/%d] 抓取详情：%s", len(notes) + 1, limit, item["title"][:30])
 
-                    await page.goto(detail_url, wait_until="load", timeout=20000)
-                    await asyncio.sleep(1.5)
+                    # 详情页也用 domcontentloaded，加快速度
+                    await page.goto(detail_url, wait_until="domcontentloaded", timeout=30000)
+                    await asyncio.sleep(2)  # 等待内容渲染
 
                     # 提取正文内容
                     desc = await _extract_note_content(page)

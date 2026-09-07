@@ -264,3 +264,7 @@ for node, update in items:
 注意点：
 
 - `.env`（含 `DEEPSEEK_API_KEY`）、`*.db`（含 `-wal`/`-shm`）、`node_modules/`、`.venv/`、`__pycache__/` 等已写入 `.gitignore`，**真实 API Key 绝不能提交**，只提交 `.env.example` 模板。
+
+# 部署
+## 本地远程连接命令
+ssh ubuntu@118.89.71.196
