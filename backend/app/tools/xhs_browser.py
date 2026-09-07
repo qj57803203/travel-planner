@@ -168,12 +168,16 @@ async def _wait_for_xhs_login(page, search_url: str) -> bool:
 async def _search_and_extract(query: str, limit: int) -> tuple[list[dict], str]:
     """用 CDP 浏览小红书搜索页 + 详情页，提取攻略内容。"""
     from app.tools.chrome_manager import get_chrome_page
+    import time
 
     notes: list[dict] = []
     error = ""
+    start_time = time.time()
 
     try:
         async with get_chrome_page(timeout_s=90) as page:
+            logger.info("[%.1fs] Chrome 页面获取成功", time.time() - start_time)
+
             # 1. 加载 cookies（通过 CDP Network.setCookie）
             cookies = _load_cookies()
             if cookies:
@@ -192,73 +196,107 @@ async def _search_and_extract(query: str, limit: int) -> tuple[list[dict], str]:
 
             # 2. 访问小红书搜索页
             search_url = f"https://www.xiaohongshu.com/search_result?keyword={query}&source=web_search_result_notes"
-            logger.info("访问小红书搜索页：%s", search_url)
+            logger.info("[%.1fs] 访问小红书搜索页：%s", time.time() - start_time, search_url)
             # 使用 domcontentloaded 而非 load，小红书动态内容多，完全加载太慢
             await page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
-            await asyncio.sleep(5)  # 等待动态内容渲染（小红书 SPA 需要更多时间）
+            logger.info("[%.1fs] 搜索页加载完成", time.time() - start_time)
+            # 等待 SPA 渲染（小红书搜索结果是动态加载的，需要足够时间）
+            # 2026-09 实测：5s 有时不够，8s 较稳定
+            await asyncio.sleep(8)
+
+            # 调试：抓取页面内容，检查是否被风控
+            try:
+                page_html = await page.content()
+                page_title = await page.evaluate("document.title")
+                logger.info("[%.1fs] 页面标题: %s", time.time() - start_time, page_title)
+                logger.info("[%.1fs] 页面HTML长度: %d 字符", time.time() - start_time, len(page_html))
+                # 打印前2000字符，看看返回了什么
+                logger.info("===== 页面内容前2000字符 =====\n%s\n===========================", page_html[:2000])
+                # 保存完整页面到临时文件
+                with open("/tmp/xhs_debug.html", "w", encoding="utf-8") as f:
+                    f.write(page_html)
+                logger.info("[%.1fs] 完整页面已保存到 /tmp/xhs_debug.html", time.time() - start_time)
+            except Exception as e:
+                logger.warning("抓取页面内容失败：%s", e)
 
             # 3. 提取搜索结果
-            # 小红书搜索结果的常见选择器（可能需要根据实际情况调整）
-            feed_items = await page.query_selector_all('[class*="note-item"], [class*="feed-item"], section[class*="note"]')
+            # 2026-09 实测验证：小红书搜索结果卡片是 section.note-item，
+            # 每个卡片有 data-note-id 属性，内部有 .title / .author / .like-wrapper .count
+            feed_items = await page.query_selector_all('section.note-item')
+
+            # 如果没找到，多等几秒再试（SPA 渲染可能较慢）
+            if not feed_items:
+                logger.info("[%.1fs] 首次未找到 section.note-item，等待 5 秒重试...", time.time() - start_time)
+                await asyncio.sleep(5)
+                feed_items = await page.query_selector_all('section.note-item')
 
             if not feed_items:
-                # 备用选择器：尝试更通用的方案
-                feed_items = await page.query_selector_all('a[href*="/explore/"]')
-                logger.info("使用备用选择器，找到 %d 个链接", len(feed_items))
+                # 备用选择器
+                feed_items = await page.query_selector_all('[class*="note-item"], [class*="feed-item"]')
+                logger.info("使用备用选择器，找到 %d 个元素", len(feed_items))
 
             if not feed_items:
-                # 再尝试：检查页面状态
+                # 再尝试：检查页面状态（可能是登录墙）
                 page_text = await page.inner_text("body")
                 if "登录" in page_text[:200] or "login" in page_text[:200].lower():
-                    # 检测到登录墙，进入等待模式
                     logger.warning("小红书需要登录，进入等待模式：%s", search_url)
                     login_result = await _wait_for_xhs_login(page, search_url)
                     if login_result:
-                        # 登录成功，重新提取搜索结果
-                        feed_items = await page.query_selector_all('[class*="note-item"], [class*="feed-item"], section[class*="note"]')
+                        feed_items = await page.query_selector_all('section.note-item')
                         if not feed_items:
-                            feed_items = await page.query_selector_all('a[href*="/explore/"]')
-                            logger.info("登录后使用备用选择器，找到 %d 个链接", len(feed_items))
+                            feed_items = await page.query_selector_all('[class*="note-item"]')
+                            logger.info("登录后使用备用选择器，找到 %d 个元素", len(feed_items))
                     else:
                         error = "需要登录小红书（请扫码登录）"
                         logger.warning("小红书登录等待超时：%s", search_url)
                         return [], error
                 else:
-                    error = f"搜索结果为空（页面无匹配元素）"
+                    error = "搜索结果为空（页面无匹配元素）"
                     logger.warning("小红书搜索结果为空：%s", search_url[:100])
                     return [], error
 
             logger.info("找到 %d 个搜索结果", len(feed_items))
 
-            # 4. 提取笔记基本信息
+            # 4. 提取笔记基本信息（使用 data-note-id + .title + .author 精确选择器）
             seen_ids = set()
             raw_items = []
 
-            for item in feed_items[:limit + 5]:  # 多取一些，后面可能有重复/广告
+            for item in feed_items[:limit + 5]:
                 try:
-                    # 提取链接
-                    href = await item.get_attribute("href") or ""
-                    if not href:
+                    # 优先从 data-note-id 属性获取笔记 ID（2026-09 验证的精确方式）
+                    note_id = await item.get_attribute("data-note-id") or ""
+
+                    # 备用：从内部链接提取
+                    if not note_id:
                         link_el = await item.query_selector("a[href*='/explore/']")
                         if link_el:
                             href = await link_el.get_attribute("href") or ""
-
-                    # 提取笔记 ID
-                    note_id = ""
-                    if "/explore/" in href:
-                        note_id = href.split("/explore/")[-1].split("?")[0].split("#")[0]
-                    elif "/discovery/item/" in href:
-                        note_id = href.split("/discovery/item/")[-1].split("?")[0]
+                            if "/explore/" in href:
+                                note_id = href.split("/explore/")[-1].split("?")[0].split("#")[0]
 
                     if not note_id or note_id in seen_ids:
                         continue
                     seen_ids.add(note_id)
 
-                    # 提取标题
-                    title_el = await item.query_selector("[class*='title'], [class*='desc'], span, p")
+                    # 提取标题（.title 类，2026-09 验证的选择器）
+                    title_el = await item.query_selector(".title")
                     title = ""
                     if title_el:
                         title = (await title_el.inner_text()).strip()[:80]
+
+                    # 提取作者（.author 类）
+                    author_el = await item.query_selector(".author")
+                    author = ""
+                    if author_el:
+                        author_text = (await author_el.inner_text()).strip()
+                        # 作者文字可能包含日期，取第一行
+                        author = author_text.split("\n")[0].strip()[:30]
+
+                    # 提取点赞数
+                    like_el = await item.query_selector(".like-wrapper .count")
+                    like_count = ""
+                    if like_el:
+                        like_count = (await like_el.inner_text()).strip()
 
                     # 提取封面图
                     img_el = await item.query_selector("img")
@@ -269,6 +307,8 @@ async def _search_and_extract(query: str, limit: int) -> tuple[list[dict], str]:
                     raw_items.append({
                         "note_id": note_id,
                         "title": title or "无标题",
+                        "author": author,
+                        "like_count": like_count,
                         "cover": cover,
                     })
                 except Exception:
@@ -306,13 +346,19 @@ async def _search_and_extract(query: str, limit: int) -> tuple[list[dict], str]:
                         continue
 
                     consecutive_failures = 0
+                    # 作者信息优先用搜索列表的（详情页结构不同，提取更复杂）
+                    author = item.get("author", "")
+                    like_count = item.get("like_count", "")
                     notes.append({
                         "title": f"小红书｜{item['title'][:40]}",
                         "url": detail_url,
                         "summary": desc[:1500],
                         "cover": item["cover"],
+                        "author": author,
+                        "like_count": like_count,
                     })
-                    logger.info("    成功：《%s》（%d 字）", item["title"][:30], len(desc))
+                    logger.info("    成功：《%s》（%d 字）作者=%s 点赞=%s",
+                                item["title"][:30], len(desc), author, like_count)
 
                 except Exception as e:
                     consecutive_failures += 1

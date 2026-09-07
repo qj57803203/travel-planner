@@ -79,7 +79,17 @@ class CDPPage:
 
     async def goto(self, url: str, wait_until: str = "load", timeout: float = 30000):
         """导航到 URL。"""
-        await self._send("Page.enable")
+        # Page.enable 可能超时，添加重试逻辑
+        for attempt in range(3):
+            try:
+                await self._send("Page.enable")
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                logger.warning("Page.enable 失败（第%d次）：%s: %s", attempt + 1, type(e).__name__, e)
+                await asyncio.sleep(1)
+
         await self._send("Page.navigate", {"url": url})
         # 等待页面加载
         deadline = asyncio.get_event_loop().time() + timeout / 1000
@@ -302,7 +312,14 @@ async def get_chrome_page(
             await page.goto("https://example.com")
             content = await page.evaluate("document.title")
     """
-    await asyncio.to_thread(_CHROME_LOCK.acquire)
+    # 带超时的锁获取，避免无限等待
+    import concurrent.futures
+    lock_acquired = await asyncio.wait_for(
+        asyncio.to_thread(_CHROME_LOCK.acquire),
+        timeout=timeout_s
+    )
+    if not lock_acquired:
+        raise TimeoutError(f"获取 Chrome 锁超时（>{timeout_s}s）")
     try:
         page = await _create_page_with_retry(retries)
         yield page

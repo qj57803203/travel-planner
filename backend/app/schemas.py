@@ -65,6 +65,8 @@ class XhsNote(BaseModel):
     url: str = ""
     summary: str = ""
     cover: str = ""
+    author: str = ""       # 小红书作者名
+    like_count: str = ""   # 点赞数（如 "9958"、"4.3万"）
 
 
 class ResearchInfo(BaseModel):
