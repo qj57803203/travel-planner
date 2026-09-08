@@ -1,7 +1,17 @@
 """FastAPI 应用入口。"""
 import logging
+import time
+from datetime import datetime, timezone, timedelta
 
 import colorlog
+
+# 强制日志时间使用北京时间（UTC+8），避免服务器时区为 UTC 导致差 8 小时
+_BJT = timezone(timedelta(hours=8))
+def _bjt_converter(*args):
+    """返回北京时间的 struct_time，供 logging 格式化使用。"""
+    return datetime.now(_BJT).timetuple()
+
+logging.Formatter.converter = _bjt_converter
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
