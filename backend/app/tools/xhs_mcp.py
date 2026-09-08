@@ -1,14 +1,16 @@
-"""小红书 MCP 客户端 —— xpzouying/xiaohongshu-mcp 薄封装。
+"""小红书 MCP 客户端 —— xpzouying/xiaohongshu-mcp 薄封装（主力方案）。
 
-用 Windows 二进制跑 xiaohongshu-mcp（127.0.0.1:18060，扫码登录 cookie 持久化），
-本模块经 mcp streamable HTTP 调它的 search_feeds / get_feed_detail。
+通过 MCP Streamable HTTP 协议调用小红书搜索/详情/登录等工具。
+登录机制：调用 get_login_qrcode 获取二维码（base64），开发者扫码后 MCP 自动保存 cookie。
 
 设计约束：
-- `XHS_MCP_URL` 未配置 → `enabled()=False`，调用方跳过，走预置数据兜底；
+- `XHS_MCP_URL` 未配置 → `enabled()=False`，调用方跳过；
 - 一切失败（超时 / 未登录 / 结构变化）→ 返回空列表并带出原因，绝不阻塞主流程；
 - 这个第三方 MCP 还暴露了 publish / comment / like / favorite 等**写操作**，而登录态是全平台
   共享账号，一旦有代码路径把工具名交给 LLM 决定就可能越权发帖。这里硬编码只读白名单，
   让越权在结构上不可能。
+
+资源占用（线上实测）：361.6 MiB 内存，369 个进程
 """
 
 from __future__ import annotations
@@ -122,7 +124,8 @@ def note_url(feed_id: str) -> str:
 
 # ---------- MCP 调用 ----------
 
-_READONLY_TOOLS = frozenset({"search_feeds", "get_feed_detail"})
+# 只读白名单 + 登录管理工具（get_login_qrcode / check_login_status / delete_cookies 不写业务数据）
+_READONLY_TOOLS = frozenset({"search_feeds", "get_feed_detail", "get_login_qrcode", "check_login_status", "delete_cookies"})
 
 
 class XHSToolNotAllowed(RuntimeError):
@@ -140,10 +143,19 @@ async def _call_tool(tool: str, args: dict) -> str:
     from mcp.client.streamable_http import streamablehttp_client
 
     async def _inner() -> str:
+        import time
+        t0 = time.time()
+        logger.info("[MCP] 开始连接 %s，工具=%s", settings.xhs_mcp_url, tool)
         async with streamablehttp_client(settings.xhs_mcp_url) as (r, w, _):
+            t1 = time.time()
+            logger.info("[MCP] 连接建立耗时 %.1fs，开始初始化会话", t1 - t0)
             async with ClientSession(r, w) as s:
                 await s.initialize()
+                t2 = time.time()
+                logger.info("[MCP] 会话初始化耗时 %.1fs，开始调用工具 %s", t2 - t1, tool)
                 res = await s.call_tool(tool, args)
+                t3 = time.time()
+                logger.info("[MCP] 工具调用耗时 %.1fs，返回 %d 个 content", t3 - t2, len(res.content))
                 return "\n".join(
                     c.text for c in res.content if getattr(c, "type", "") == "text"
                 )
@@ -151,10 +163,113 @@ async def _call_tool(tool: str, args: dict) -> str:
     return await asyncio.wait_for(_inner(), timeout=settings.xhs_mcp_timeout_s)
 
 
+async def _call_tool_raw(tool: str, args: dict) -> list:
+    """单次 MCP 工具调用，返回原始 content 列表（包含 text/image 等多种类型）。
+
+    用于需要获取图片等非文本内容的场景（如 get_login_qrcode 返回二维码图片）。
+    """
+    if tool not in _READONLY_TOOLS:
+        logger.error("拒绝调用非只读小红书工具 %r（白名单：%s）", tool, sorted(_READONLY_TOOLS))
+        raise XHSToolNotAllowed(f"xhs tool not allowed: {tool}")
+
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
+
+    async def _inner() -> list:
+        async with streamablehttp_client(settings.xhs_mcp_url) as (r, w, _):
+            async with ClientSession(r, w) as s:
+                await s.initialize()
+                res = await s.call_tool(tool, args)
+                return res.content
+
+    return await asyncio.wait_for(_inner(), timeout=settings.xhs_mcp_timeout_s)
+
+
+# ---------- 登录管理（二维码扫码登录） ----------
+
+async def get_login_qrcode() -> tuple[str, int, bool]:
+    """获取小红书登录二维码。
+
+    调用 MCP 的 get_login_qrcode 工具。
+    MCP 返回格式（非 JSON）：
+    - 已登录时：文本 "你当前已处于登录状态"
+    - 未登录时：[文本 "请用小红书 App 在 ... 前扫码登录 👇", 图片 content(image/png)]
+
+    Returns:
+        (qrcode_base64, timeout_seconds, already_logged_in)
+        - qrcode_base64: "data:image/png;base64,..." 格式，前端直接塞 <img src>
+        - timeout_seconds: 二维码有效时间（秒），超时需重新获取
+        - already_logged_in: 已登录时为 True，此时 qrcode_base64 为空
+    """
+    logger.info("开始获取小红书登录二维码")
+    try:
+        contents = await _call_tool_raw("get_login_qrcode", {})
+
+        # 遍历 content 列表，提取文本和图片
+        text_parts = []
+        image_b64 = ""
+        for c in contents:
+            ctype = getattr(c, "type", "")
+            if ctype == "text":
+                text_parts.append(getattr(c, "text", ""))
+            elif ctype == "image":
+                # MCP 返回的是纯 base64（不含 data: 前缀），需要拼上
+                raw_b64 = getattr(c, "data", "")
+                mime = getattr(c, "mimeType", "image/png")
+                if raw_b64:
+                    image_b64 = f"data:{mime};base64,{raw_b64}"
+
+        full_text = "\n".join(text_parts)
+        logger.info("MCP get_login_qrcode 返回：text=%s, has_image=%s", full_text[:100], bool(image_b64))
+
+        # 判断是否已登录
+        if "已" in full_text and "登录" in full_text:
+            logger.info("小红书：已处于登录状态，无需扫码")
+            return "", 0, True
+
+        if not image_b64:
+            logger.warning("小红书：MCP 未返回二维码图片，text=%s", full_text[:200])
+            return "", 0, False
+
+        logger.info("小红书：二维码已获取，请扫码登录")
+        return image_b64, 240, False
+
+    except Exception as e:
+        logger.error("获取小红书登录二维码失败：%s", _err_text(e), exc_info=True)
+        return "", 0, False
+
+
+async def check_login_status() -> tuple[bool, str]:
+    """检查小红书登录状态。
+
+    MCP 返回格式（非 JSON）：
+    - 已登录："✅ 已登录\n用户名: xxx\n\n你可以使用其他功能了。"
+    - 未登录："❌ 未登录\n\n请使用 get_login_qrcode 工具获取二维码进行登录。"
+
+    Returns:
+        (is_logged_in, message)
+    """
+    logger.info("检查小红书登录状态")
+    try:
+        text = await _call_tool("check_login_status", {})
+        logger.info("MCP check_login_status 返回：%s", text[:200])
+
+        # 判断登录状态：文本中包含 "✅ 已登录" 表示已登录
+        logged_in = "✅" in text and "已登录" in text
+        message = text.strip()
+        logger.info("小红书登录状态：%s", "已登录" if logged_in else "未登录")
+        return logged_in, message
+
+    except Exception as e:
+        err = _err_text(e)
+        logger.error("检查小红书登录状态失败：%s", err, exc_info=True)
+        return False, err
+
+
 async def search_notes(keyword: str) -> tuple[list[dict], str]:
     """搜笔记 → ([{feed_id, xsec_token, title, cover}], 错误信息)；失败返回 ([], 原因)。
 
-    搜索是整条链路的网关（失败 = 这轮小红书全军覆没，回退预置数据），冷加载偶发超时——重试一次。
+    搜索是整条链路的网关（失败 = 这轮小红书全军覆没），冷加载偶发超时——重试一次。
     """
     if not enabled():
         return [], ""

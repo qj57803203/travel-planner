@@ -33,35 +33,8 @@ def enabled() -> bool:
 
 
 # ============================================================
-# 城市 ID 解析（参考 browser_tool.py 的 _city_suggest_js）
+# 城市 ID 解析
 # ============================================================
-
-def _city_suggest_js(city: str) -> str:
-    """生成 JS 代码：调携程 getHotelKeywords API 获取城市数字 ID。
-
-    在携程页面上下文执行 fetch（CORS 允许 hotels.ctrip.com 源）。
-    """
-    city_json = json.dumps(city, ensure_ascii=False)
-    return (
-        "async () => {"
-        f" const CITY = {city_json};"
-        " const body = {queryInfo: {keyword: CITY, actionType: 'destination'},"
-        "   head: {platform: 'PC', cver: '0', bu: 'HBU', group: 'ctrip', locale: 'zh-CN',"
-        "          region: 'CN', timezone: '8', currency: 'CNY', isSSR: false, extension: []}};"
-        " const res = await fetch('//m.ctrip.com/restapi/soa2/34951/getHotelKeywords',"
-        "   {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});"
-        " const data = await res.json();"
-        " const kws = (((data || {}).data || {}).mainKeywordList || {}).keywords || [];"
-        " for (const k of kws) {"
-        "   const info = ((k || {}).keyword || {}).keywordContentInfo || {};"
-        "   if (info.typeName === '城市' && (info.keyword || '').includes(CITY)) {"
-        "     return JSON.stringify({id: info.keywordId, name: info.keyword});"
-        "   }"
-        " }"
-        " return JSON.stringify({id: null});"
-        "}"
-    )
-
 
 def _load_city_cache(city_name: str) -> int | None:
     """从缓存查城市 ID；未命中返回 None。"""
