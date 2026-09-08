@@ -837,7 +837,6 @@ def _build_legs(spots: list, city: str) -> tuple[list[dict], str]:
             if r is None:
                 logger.warning("路段 %s → %s：步行路线查询失败", a, b)
                 continue
-            logger.info("市内交通 %s → %s：步行 %dm", a, b, distance)
         else:
             # 对比驾车和地铁耗时
             metro = amap.metro_route(ga["lnglat"], gb["lnglat"], city)
@@ -846,10 +845,8 @@ def _build_legs(spots: list, city: str) -> tuple[list[dict], str]:
 
             if metro and metro_time <= driving_time:
                 r = metro
-                logger.info("市内交通 %s → %s：地铁 %dmin（驾车 %dmin）", a, b, metro_time, driving_time)
             elif driving:
                 r = driving
-                logger.info("市内交通 %s → %s：驾车 %dmin", a, b, driving_time)
             else:
                 logger.warning("路段 %s → %s：驾车和地铁均查询失败", a, b)
                 continue
