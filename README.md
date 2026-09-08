@@ -1,7 +1,8 @@
 # 旅行规划 Agent
 
 个人自用的旅行规划工具：输入一句自然语言需求，自动抽取偏好、搜集信息、生成每日行程。
-<img width="2340" height="1277" alt="image" src="https://github.com/user-attachments/assets/60e26251-d063-464a-adb7-5f95e834d6af" />
+<img width="2196" height="1274" alt="image" src="https://github.com/user-attachments/assets/6d5f919e-5785-4ea8-b0a9-650875d8d1c1" />
+
 
 ## 技术栈
 
