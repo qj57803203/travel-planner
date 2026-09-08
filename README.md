@@ -1,6 +1,10 @@
 # 旅行规划 Agent
 
-输入一句自然语言需求，自动抽取偏好 → 搜集小红书攻略素材 → 生成每日行程 → 搜索酒店 → 规划交通，全流程自动化。
+个人自用的旅行规划工具：输入一句自然语言需求，自动抽取偏好、搜集信息、生成每日行程。
+<img width="2196" height="1274" alt="image" src="https://github.com/user-attachments/assets/6d5f919e-5785-4ea8-b0a9-650875d8d1c1" />
+
+
+## 技术栈
 
 <img width="2196" height="1274" alt="image" src="https://github.com/user-attachments/assets/6d5f919e-5785-4ea8-b0a9-650875d8d1c1" />
 
