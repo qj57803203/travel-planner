@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # 小红书 MCP（xpzouying/xiaohongshu-mcp）：空 = 不启用
     xhs_mcp_url: str = ""            # 例：http://127.0.0.1:18060/mcp
     xhs_mcp_timeout_s: int = 60      # 单次 MCP 调用整体超时（MCP 服务冷启动需 ~40s）
-    xhs_collect_timeout_s: float = 120  # 一轮 xhs 采集总预算（搜索 + 详情）120s够爬5条
+    xhs_collect_timeout_s: float = 60  # 一轮 xhs 采集总预算（搜索 + 详情）120s够爬5条
     xhs_notes_per_turn: int = 5      # 每次搜索最多取几篇笔记详情
     xhs_cache_ttl_days: int = 7      # 小红书笔记缓存有效期（天）
 
@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     amap_web_key: str = ""
     amap_timeout_s: float = 8        # 单次高德请求超时（秒）
 
-    # 携程酒店爬虫（Chrome MCP + chrome-devtools-mcp）：空 = 不启用酒店搜索
-    ctrip_mcp_url: str = ""          # 非空即启用（如 "1"），已弃用旧 Playwright MCP 地址
+    # 携程酒店爬虫（原生 CDP WebSocket 直连 Chrome）：空 = 不启用酒店搜索
+    ctrip_mcp_url: str = ""          # 非空即启用（如 "1"），字段名沿用旧版，实际走 CDP 直连
     ctrip_cache_ttl_days: int = 3    # 携程酒店缓存有效期（天）
     ctrip_city_cache_ttl_days: int = 365  # 城市 ID 缓存有效期（天，基本不变）
 

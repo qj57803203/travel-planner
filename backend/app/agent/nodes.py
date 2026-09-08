@@ -13,7 +13,6 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import XhsNoteCache
 from app.tools import amap, xhs_mcp
-# CDP 直连方案已注释，保留作为降级参考（2026-09 迁移到 MCP 主力方案）
 # from app.tools import xhs_browser
 
 DEFAULT_PREFERENCES = {
@@ -68,7 +67,6 @@ def _parse_json(text: str) -> dict:
     Returns:
         解析后的 dict。解析失败时抛出 ValueError（由调用方 fallback）。
     """
-    logger.info("大模型输出：%s\n",text)
     if not isinstance(text, str):
         raise TypeError(f"期望 str，实际收到 {type(text).__name__}")
 
@@ -174,7 +172,6 @@ def research(state: AgentState) -> dict:
     """节点 2：搜集信息素材 —— 小红书攻略笔记。
 
     小红书采集使用 MCP 方案（xiaohongshu-mcp 容器，通过 MCP 协议调用）。
-    CDP 直连方案已注释保留，可作为降级参考。
 
     Returns:
         {
@@ -206,12 +203,12 @@ def research(state: AgentState) -> dict:
 
     # 2. 小红书笔记 —— 先查一周内目的地缓存，命中秒回；未命中才实时爬取并写缓存
     #    使用 MCP 方案（xiaohongshu-mcp 容器，通过 MCP 协议调用）
-    #    ─── CDP 直连方案已注释，保留作为降级参考 ───
     if dest:
         cached = _load_xhs_cache(dest)
         if cached:
             research_info["xhs_notes"] = cached
             research_info["xhs_status"] = "cached"
+            logger.info("小红书：命中缓存，%s 共 %d 篇笔记", dest, len(cached))
         else:
             interests = " ".join((prefs.get("interests") or [])[:2])
             query = f"{dest} 旅游攻略{' ' + interests if interests else ''}"
@@ -228,13 +225,6 @@ def research(state: AgentState) -> dict:
             else:
                 logger.warning("小红书：MCP 未启用（XHS_MCP_URL 未配置），跳过采集")
 
-            # ── CDP 直连方案（已注释，保留作为降级参考） ──
-            # if not notes and xhs_browser.enabled():
-            #     logger.info("小红书：MCP 方案无结果，尝试 CDP 直连 fallback")
-            #     notes, err = xhs_browser.collect_xhs_sources_sync(
-            #         query,
-            #         on_note=lambda i, note: _emit_xhs_note(writer, i, note),
-            #     )
 
             research_info["xhs_notes"] = notes
             _save_xhs_cache(dest, notes)
@@ -813,9 +803,8 @@ def _build_legs(spots: list, city: str) -> tuple[list[dict], str]:
         geo = amap.geocode(f"{city}{name}", city)
         if geo:
             coords[name] = geo
-            logger.info("地理编码 ✅ %s%s → [%.6f, %.6f]", city, name, geo["lng"], geo["lat"])
         else:
-            logger.warning("地理编码 ❌ %s%s → 无结果", city, name)
+            logger.warning("地理编码失败：%s%s → 无结果", city, name)
 
     # 诊断：哪些景点没编码成功
     names = [n.strip() for n in spots if (n or "").strip()]

@@ -121,7 +121,7 @@ def _parse_detail(text: str) -> dict | None:
 def note_url(feed_id: str) -> str:
     return f"https://www.xiaohongshu.com/explore/{feed_id}"
 
-
+#region MCP 调用
 # ---------- MCP 调用 ----------
 
 # 只读白名单 + 登录管理工具（get_login_qrcode / check_login_status / delete_cookies 不写业务数据）
@@ -140,13 +140,35 @@ async def _call_tool_on_session(session, tool: str, args: dict) -> str:
 
     import time
     t0 = time.time()
-    logger.info("[MCP] 调用工具 %s", tool)
-    res = await session.call_tool(tool, args)
+    logger.info("[MCP] 调用工具 %s，参数=%s", tool, args)
+    try:
+        res = await session.call_tool(tool, args)
+    except Exception as e:
+        t1 = time.time()
+        logger.error("[MCP] 工具调用异常，耗时 %.1fs，错误=%s", t1 - t0, _err_text(e), exc_info=True)
+        raise
     t1 = time.time()
     logger.info("[MCP] 工具调用耗时 %.1fs，返回 %d 个 content", t1 - t0, len(res.content))
-    return "\n".join(
-        c.text for c in res.content if getattr(c, "type", "") == "text"
-    )
+
+    # 拼接文本内容
+    text_parts = []
+    for c in res.content:
+        ctype = getattr(c, "type", "")
+        if ctype == "text":
+            text_parts.append(getattr(c, "text", ""))
+        elif ctype == "image":
+            logger.info("[MCP] 返回包含图片内容（%s）", getattr(c, "mimeType", "unknown"))
+        else:
+            logger.info("[MCP] 返回包含非文本内容（type=%s）", ctype)
+    text = "\n".join(text_parts)
+
+    # 检测是否是 MCP 服务端返回的错误信息
+    if "执行时发生内部错误" in text or "context deadline exceeded" in text:
+        logger.warning("[MCP] 服务端返回错误信息：%s", text[:300])
+    elif tool == "search_feeds" and not text.strip().startswith("{"):
+        logger.warning("[MCP] search_feeds 返回非 JSON 内容（前200字）：%s", text[:200])
+
+    return text
 
 
 async def _call_tool(tool: str, args: dict) -> str:
@@ -161,20 +183,37 @@ async def _call_tool(tool: str, args: dict) -> str:
     async def _inner() -> str:
         import time
         t0 = time.time()
-        logger.info("[MCP] 开始连接 %s，工具=%s", settings.xhs_mcp_url, tool)
-        async with streamablehttp_client(settings.xhs_mcp_url) as (r, w, _):
-            t1 = time.time()
-            logger.info("[MCP] 连接建立耗时 %.1fs，开始初始化会话", t1 - t0)
-            async with ClientSession(r, w) as s:
-                await s.initialize()
-                t2 = time.time()
-                logger.info("[MCP] 会话初始化耗时 %.1fs，开始调用工具 %s", t2 - t1, tool)
-                res = await s.call_tool(tool, args)
-                t3 = time.time()
-                logger.info("[MCP] 工具调用耗时 %.1fs，返回 %d 个 content", t3 - t2, len(res.content))
-                return "\n".join(
-                    c.text for c in res.content if getattr(c, "type", "") == "text"
-                )
+        logger.info("[MCP] 开始连接 %s，工具=%s，参数=%s", settings.xhs_mcp_url, tool, args)
+        try:
+            async with streamablehttp_client(settings.xhs_mcp_url) as (r, w, _):
+                t1 = time.time()
+                logger.info("[MCP] 连接建立耗时 %.1fs，开始初始化会话", t1 - t0)
+                async with ClientSession(r, w) as s:
+                    await s.initialize()
+                    t2 = time.time()
+                    logger.info("[MCP] 会话初始化耗时 %.1fs，开始调用工具 %s", t2 - t1, tool)
+                    res = await s.call_tool(tool, args)
+                    t3 = time.time()
+                    logger.info("[MCP] 工具调用耗时 %.1fs，返回 %d 个 content", t3 - t2, len(res.content))
+
+                    # 拼接文本并检测错误
+                    text_parts = []
+                    for c in res.content:
+                        ctype = getattr(c, "type", "")
+                        if ctype == "text":
+                            text_parts.append(getattr(c, "text", ""))
+                        else:
+                            logger.info("[MCP] 返回包含非文本内容（type=%s）", ctype)
+                    text = "\n".join(text_parts)
+
+                    if "执行时发生内部错误" in text or "context deadline exceeded" in text:
+                        logger.warning("[MCP] 服务端返回错误信息：%s", text[:300])
+
+                    return text
+        except Exception as e:
+            t_err = time.time()
+            logger.error("[MCP] 调用失败，耗时 %.1fs，错误=%s", t_err - t0, _err_text(e), exc_info=True)
+            raise
 
     return await asyncio.wait_for(_inner(), timeout=settings.xhs_mcp_timeout_s)
 
@@ -290,21 +329,40 @@ async def search_notes(keyword: str, session=None) -> tuple[list[dict], str]:
     """
     if not enabled():
         return [], ""
-    logger.info("开始搜索小红书：%s", keyword)
+    logger.info("开始搜索小红书：%s（session=%s）", keyword, "复用" if session else "新建")
     last_err = ""
     for attempt in range(2):
         try:
+            logger.info("[MCP] 第 %d 次尝试搜索，keyword=%s", attempt + 1, keyword)
             if session:
                 text = await _call_tool_on_session(session, "search_feeds", {"keyword": keyword})
             else:
                 text = await _call_tool("search_feeds", {"keyword": keyword})
+            logger.info("[MCP] search_feeds 原始返回（前500字）：%s", text[:500])
+
+            # 检测是否是错误响应
+            if "执行时发生内部错误" in text or "context deadline exceeded" in text:
+                logger.warning("[MCP] 搜索返回服务端错误（第 %d 次），可能原因：MCP 服务内部超时、小红书反爬、网络问题", attempt + 1)
+                last_err = text
+                if attempt == 0:
+                    logger.info("[MCP] 等待 2 秒后重试...")
+                    import asyncio
+                    await asyncio.sleep(2)
+                continue
+
             feeds = _parse_feeds(text)
-            logger.info("小红书搜索完成，返回 %d 篇笔记", len(feeds))
+            logger.info("小红书搜索完成，解析出 %d 篇笔记", len(feeds))
+            if not feeds and text.strip():
+                logger.warning("[MCP] 搜索返回内容但解析为 0 篇，原始内容（前300字）：%s", text[:300])
             return feeds, ""
         except Exception as e:  # noqa: BLE001 — 超时/未登录/服务挂了都降级，但把原因带出去
             last_err = _err_text(e)
-            logger.warning("小红书搜索失败（第 %d 次重试）：%s %s", attempt + 1, keyword,
+            logger.warning("小红书搜索异常（第 %d 次）：%s %s", attempt + 1, keyword,
                            last_err, exc_info=attempt == 1)
+            if attempt == 0:
+                logger.info("[MCP] 等待 2 秒后重试...")
+                import asyncio
+                await asyncio.sleep(2)
     return [], last_err
 
 
@@ -382,52 +440,74 @@ async def _collect_within_budget(
     import time
     t0 = time.time()
     logger.info("[MCP] 建立长期连接用于采集，URL=%s", settings.xhs_mcp_url)
-    async with streamablehttp_client(settings.xhs_mcp_url) as (r, w, _):
-        t1 = time.time()
-        logger.info("[MCP] 连接建立耗时 %.1fs，初始化会话", t1 - t0)
-        async with ClientSession(r, w) as session:
-            await session.initialize()
-            t2 = time.time()
-            logger.info("[MCP] 会话初始化耗时 %.1fs，开始采集", t2 - t1)
+    try:
+        async with streamablehttp_client(settings.xhs_mcp_url) as (r, w, _):
+            t1 = time.time()
+            logger.info("[MCP] 连接建立耗时 %.1fs，初始化会话", t1 - t0)
+            async with ClientSession(r, w) as session:
+                await session.initialize()
+                t2 = time.time()
+                logger.info("[MCP] 会话初始化耗时 %.1fs，开始采集", t2 - t1)
 
-            # 搜索笔记（复用连接）
-            feeds, search_err = await search_notes(query, session=session)
-            if search_err:
-                return search_err
+                # 搜索笔记（复用连接）
+                logger.info("[MCP] 开始搜索笔记，keyword=%s", query)
+                feeds, search_err = await search_notes(query, session=session)
+                logger.info("[MCP] 搜索返回：feeds=%d, search_err=%s", len(feeds), search_err[:200] if search_err else "(无)")
 
-            # 逐篇获取详情（复用连接）
-            attempts = 0
-            consecutive_failures = 0
-            for f in feeds:
-                if len(out) >= n or attempts >= n + 2:
-                    break
-                attempts += 1
-                logger.info("  [%d/%d] 抓取第 %d 篇：《%s》",
-                            len(out) + 1, n, attempts, (f.get("title") or "无标题")[:30])
-                det = await note_detail(f["feed_id"], f["xsec_token"], session=session)
-                if det is None:
-                    consecutive_failures += 1
-                    if consecutive_failures >= 2:
-                        logger.warning("  连续 %d 次失败，熔断停止（小红书可能异常）", consecutive_failures)
-                        return "" if out else "详情连续失败，已熔断"
-                    continue
+                if search_err:
+                    logger.error("[MCP] 搜索失败，错误详情：%s", search_err[:500])
+                    return search_err
+
+                if not feeds:
+                    logger.warning("[MCP] 搜索成功但返回 0 篇笔记，可能是关键词问题或小红书无结果")
+                    return ""
+
+                logger.info("[MCP] 搜索成功，获得 %d 篇笔记，开始逐篇获取详情", len(feeds))
+
+                # 逐篇获取详情（复用连接）
+                attempts = 0
                 consecutive_failures = 0
-                if len(det["desc"]) < 100:  # 太短的笔记（纯图/广告位）不当来源，但不计故障
-                    logger.info("    跳过：正文过短（%d 字，纯图/广告位）", len(det["desc"]))
-                    continue
-                note = {
-                    "title": f"小红书｜{det['title'][:40]}",
-                    "url": note_url(f["feed_id"]),
-                    "summary": det["desc"][:1500],  # 笔记细节是攻略质量原料，给足；截断控 token
-                    "cover": det.get("cover") or f.get("cover") or "",
-                }
-                out.append(note)
-                logger.info("  已采集第 %d 篇：《%s》", len(out), det["title"][:30])
-                if on_note is not None:
-                    try:
-                        on_note(len(out), note)
-                    except Exception:  # noqa: BLE001 — 进度回调绝不能影响采集
-                        pass
+                loop_start = time.time()
+                for idx, f in enumerate(feeds):
+                    if len(out) >= n or attempts >= n + 2:
+                        logger.info("[MCP] 达到采集上限（已采集 %d 篇，上限 %d 篇），停止", len(out), n)
+                        break
+                    attempts += 1
+                    elapsed = time.time() - loop_start
+                    remaining = settings.xhs_collect_timeout_s - elapsed
+                    logger.info("  [%d/%d] 抓取第 %d 篇：《%s》（已耗时 %.1fs，剩余预算 %.1fs）",
+                                len(out) + 1, n, attempts, (f.get("title") or "无标题")[:30],
+                                elapsed, remaining)
+                    det = await note_detail(f["feed_id"], f["xsec_token"], session=session)
+                    if det is None:
+                        consecutive_failures += 1
+                        logger.warning("  第 %d 篇详情获取失败（连续失败 %d 次）", attempts, consecutive_failures)
+                        if consecutive_failures >= 2:
+                            logger.warning("  连续 %d 次失败，熔断停止（小红书可能异常）", consecutive_failures)
+                            return "" if out else "详情连续失败，已熔断"
+                        continue
+                    consecutive_failures = 0
+                    if len(det["desc"]) < 100:  # 太短的笔记（纯图/广告位）不当来源，但不计故障
+                        logger.info("    跳过：正文过短（%d 字，纯图/广告位）", len(det["desc"]))
+                        continue
+                    note = {
+                        "title": f"小红书｜{det['title'][:40]}",
+                        "url": note_url(f["feed_id"]),
+                        "summary": det["desc"][:1500],  # 笔记细节是攻略质量原料，给足；截断控 token
+                        "cover": det.get("cover") or f.get("cover") or "",
+                    }
+                    out.append(note)
+                    logger.info("  已采集第 %d 篇：《%s》", len(out), det["title"][:30])
+                    if on_note is not None:
+                        try:
+                            on_note(len(out), note)
+                        except Exception:  # noqa: BLE001 — 进度回调绝不能影响采集
+                            pass
+
+    except Exception as e:
+        t_err = time.time()
+        logger.error("[MCP] 采集过程中发生异常，耗时 %.1fs，错误=%s", t_err - t0, _err_text(e), exc_info=True)
+        return f"采集异常：{_err_text(e)}"
 
     logger.info("[MCP] 采集完成，总耗时 %.1fs，共 %d 篇", time.time() - t0, len(out))
     return ""
@@ -443,6 +523,14 @@ def collect_xhs_sources_sync(
         return [], ""
     try:
         return asyncio.run(collect_xhs_sources(query, limit, on_note))
-    except Exception as e:  # noqa: BLE001
-        logger.warning("小红书采集同步调用失败：%s", query, exc_info=True)
-        return [], _err_text(e)
+    except BaseException as e:  # noqa: BLE001 — BaseException 才能捕获 ExceptionGroup（Python 3.11+）
+        # 穿透 ExceptionGroup 取底层异常，精确报错
+        err = _err_text(e)
+        # 分类日志：连接失败 vs 超时 vs 其他
+        if "ConnectError" in err or "All connection attempts failed" in err:
+            logger.error("小红书采集失败：MCP 服务连接失败（%s）— 请检查 xhs-mcp 服务是否启动", err)
+        elif "TimeoutError" in err or "timed out" in err.lower():
+            logger.warning("小红书采集超时：%s", err)
+        else:
+            logger.warning("小红书采集同步调用失败：%s | %s", query, err, exc_info=True)
+        return [], err

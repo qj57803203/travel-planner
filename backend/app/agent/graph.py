@@ -3,15 +3,19 @@
 修改模式下（is_modification=True 且目的地未变），跳过 research 节点直接进 plan。
 """
 from langgraph.graph import END, START, StateGraph
-
+import logging
 from app.agent.nodes import extract_preferences, generate_itinerary, hotel_search, plan_transport, research
 from app.agent.state import AgentState
 
-
+logger = logging.getLogger(__name__)
 def _route_after_extract(state: AgentState) -> str:
     """extract 之后的条件路由：修改模式且目的地未变时跳过 research。"""
-    if state.get("is_modification") and not state.get("_destination_changed"):
+    is_mod = state.get("is_modification", False)
+    dest_changed = state.get("_destination_changed", False)
+    if is_mod and not dest_changed:
+        logger.info("_route_after_extract: 跳过 research（修改模式=%s, 目的地变化=%s）", is_mod, dest_changed)
         return "plan"
+    logger.info("_route_after_extract: 进入 research（修改模式=%s, 目的地变化=%s）", is_mod, dest_changed)
     return "research"
 
 

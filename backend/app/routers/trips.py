@@ -68,6 +68,7 @@ def _initial_state(user_input: str, db: Session, trip_id: int | None = None) -> 
     """
     if not trip_id:
         # ── 首次生成 ──
+        logger.info("_initial_state: 首次生成，trip_id=%s", trip_id)
         return {"user_input": user_input, "profile_departure": _read_profile_departure(db)}
 
     # ── 修改模式 ──

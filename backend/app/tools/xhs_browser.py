@@ -462,6 +462,13 @@ def collect_xhs_sources_sync(
         return [], ""
     try:
         return asyncio.run(collect_xhs_sources(query, limit, on_note))
-    except Exception as e:
-        logger.warning("小红书浏览器爬虫同步调用失败：%s", query, exc_info=True)
-        return [], f"{type(e).__name__}: {e}"
+    except BaseException as e:  # BaseException 才能捕获 ExceptionGroup（Python 3.11+）
+        err = f"{type(e).__name__}: {e}"
+        # 分类日志：连接失败 vs 超时 vs 其他
+        if "ConnectError" in err or "All connection attempts failed" in err:
+            logger.error("小红书浏览器爬虫失败：Chrome 连接失败 — 请检查 Chrome 调试模式是否启动")
+        elif "TimeoutError" in err or "timed out" in err.lower():
+            logger.warning("小红书浏览器爬虫超时：%s", query)
+        else:
+            logger.warning("小红书浏览器爬虫同步调用失败：%s", query, exc_info=True)
+        return [], err

@@ -76,6 +76,6 @@ def health():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """应用关闭时清理 Playwright 连接。"""
+    """应用关闭时清理 CDP 连接。"""
     from app.tools.chrome_manager import close
     await close()

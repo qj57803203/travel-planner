@@ -1,8 +1,8 @@
-"""携程酒店爬虫 —— 通过 Playwright CDP 直连 Chrome 爬取携程酒店列表。
+"""携程酒店爬虫 —— 通过原生 CDP WebSocket 直连 Chrome 爬取携程酒店列表。
 
 方案演进：
 - v1: Chrome MCP (chrome-devtools-mcp) → stdio spawn npx，链路长不稳定
-- v2: Playwright CDP 直连 Docker 内常驻 Chrome，去掉 MCP 中间层
+- v2: 原生 CDP WebSocket 直连 Docker 内常驻 Chrome（chrome_manager.py），去掉 MCP 中间层
 - 爬取策略：拼 URL 导航到搜索结果页 → JS 直读 DOM 提取酒店卡片
 - 城市 ID 长期缓存 + 酒店搜索结果一周缓存
 
@@ -155,7 +155,7 @@ CTRIP_CARDS_JS = r"""
 
 
 def _parse_api_response(raw_json) -> list[dict]:
-    """解析 getAdHotels API 返回的酒店数据。兼容 Playwright 直接返回 dict 和 MCP 返回字符串。"""
+    """解析 getAdHotels API 返回的酒店数据。兼容 CDP evaluate 直接返回 dict 和字符串两种情况。"""
     val = raw_json if isinstance(raw_json, (dict, list)) else _decode_eval(raw_json)
     if not isinstance(val, dict):
         logger.warning("getAdHotels API 返回格式异常: %s", str(val)[:200])
@@ -211,7 +211,7 @@ def _parse_api_response(raw_json) -> list[dict]:
 
 
 def _parse_cards(raw_json) -> list[dict]:
-    """解析 JS 提取的酒店卡片数据（备用方案），转为标准格式。兼容 Playwright 直接返回列表。"""
+    """解析 JS 提取的酒店卡片数据（备用方案），转为标准格式。兼容 CDP evaluate 直接返回列表。"""
     val = raw_json if isinstance(raw_json, list) else _decode_eval(raw_json)
     if not isinstance(val, list):
         return []
@@ -248,25 +248,8 @@ def _parse_cards(raw_json) -> list[dict]:
         })
     return hotels
 
-
-async def _extract_hotels_via_api(page, city_id: int, keyword: str) -> list[dict]:
-    """通过 getAdHotels API 获取酒店列表（Playwright 版）。"""
-    try:
-        js_code = _get_hotels_js(city_id, keyword)
-        raw = await page.evaluate(js_code)
-        hotels = _parse_api_response(raw if isinstance(raw, str) else json.dumps(raw))
-        if hotels:
-            logger.info("getAdHotels API 获取成功：%d 条", len(hotels))
-            return hotels
-        logger.warning("getAdHotels API 返回空结果")
-        return []
-    except Exception:
-        logger.warning("getAdHotels API 调用失败", exc_info=True)
-        return []
-
-
 async def _extract_hotels_with_retry(page, attempts: int = 5) -> list[dict]:
-    """轮询等待酒店卡片渲染并提取（Playwright 版）。拿不到 ≥2 张卡时重试。"""
+    """轮询等待酒店卡片渲染并提取（CDP 版）。拿不到 ≥2 张卡时重试。"""
     for attempt in range(attempts):
         if attempt:
             await asyncio.sleep(2.5)  # 等待异步渲染
@@ -455,8 +438,15 @@ def search_hotels_sync(destination: str, keyword: str, limit: int = 5) -> tuple[
         return [], ""
     try:
         return asyncio.run(search_hotels(destination, keyword, limit))
-    except Exception as e:
-        logger.warning("携程酒店搜索同步调用失败：%s %s", destination, keyword, exc_info=True)
+    except BaseException as e:  # BaseException 才能捕获 ExceptionGroup（Python 3.11+）
+        err = str(e)
+        # 分类日志：连接失败 vs 超时 vs 其他
+        if "ConnectError" in err or "All connection attempts failed" in err:
+            logger.error("携程酒店搜索失败：Chrome 连接失败 — 请检查 Chrome 调试模式是否启动")
+        elif "TimeoutError" in err or "timed out" in err.lower():
+            logger.warning("携程酒店搜索超时：%s %s", destination, keyword)
+        else:
+            logger.warning("携程酒店搜索同步调用失败：%s %s", destination, keyword, exc_info=True)
         return [], ""
 
 
