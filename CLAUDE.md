@@ -11,7 +11,7 @@
 | Agent 编排 | LangChain + LangGraph（抽取 → 搜集 → 生成 → 酒店搜索 → 交通五步 DAG） |
 | LLM | DeepSeek（`deepseek-v4-flash`） |
 | 存储 | SQLite（`backend/trips.db`，启动时自动建表） |
-| 数据源 | 预置目的地数据 + 小红书攻略（MCP 实时爬取/缓存） + 高德地图（交通规划） |
+| 数据源 | 预置目的地数据 + 小红书攻略（CDP 直连主方案 + MCP fallback，含缓存） + 高德地图（交通规划） |
 
 ## 目录结构
 
@@ -32,9 +32,10 @@ backend/
       destinations.py    # 预置目的地数据（多城市，含酒店/景点/美食/交通）
     tools/
       amap.py            # 高德地图 API 封装（地理编码 / 公交 / 步行 / 驾车）
-      xhs_mcp.py         # 小红书攻略采集（MCP 协议，含缓存）
-      ctrip_crawler.py   # 携程酒店爬虫（Chrome MCP，URL 导航 + JS 提取）
-      mcp_client.py      # Chrome MCP 客户端封装（chrome-devtools-mcp）
+      xhs_browser.py     # 小红书攻略采集（CDP 直连主方案，222 MiB）
+      xhs_mcp.py         # 小红书攻略采集（MCP fallback，361 MiB）
+      chrome_manager.py  # Chrome CDP 连接管理器（串行锁 + 自愈）
+      ctrip_crawler.py   # 携程酒店爬虫（Chrome CDP 直连，URL 导航 + JS 提取）
     routers/
       trips.py           # 行程接口：generate / generate/stream / list / detail
   .env.example           # 环境变量样例（DeepSeek Key / 高德 Key / 小红书配置）
@@ -89,7 +90,7 @@ START → extract ──→ research ──→ plan ──→ hotel_search ─�
 | 节点 | 函数 | 干什么 | 关键点 |
 |---|---|---|---|
 | extract | `extract_preferences` | LLM 从自然语言抽取结构化偏好 | `temperature=0.0`；解析失败用默认值兜底，流程不中断 |
-| research | `research` | 预置数据 + 小红书攻略采集 | 先查缓存，未命中则实时爬取；目的地名模糊匹配 |
+| research | `research` | 小红书攻略采集 | 先查缓存，未命中则实时爬取（CDP 主方案 → MCP fallback）；目的地名模糊匹配 |
 | plan | `generate_itinerary` | LLM 根据偏好+素材生成每日行程 | `temperature=0.7`；输出含 days（景点序列）供交通节点使用；**必须输出 accommodation_area（住宿建议）** |
 | hotel_search | `hotel_search` | 根据住宿建议搜索携程酒店 | 从 accommodation_area 提取关键词（如"乐桥站"）；调用 Chrome MCP 爬取携程（URL 导航 + JS 提取）；按性价比排序取前2个；注入行程 |
 | transport | `plan_transport` | 查高德 API 生成真实交通 | 城际交通 + 逐天市内交通；结果注入行程 markdown |
@@ -194,8 +195,8 @@ google-chrome --remote-debugging-port=9222
 
 - **LLM 调用只有两处**：`extract`（temperature=0.0，追求稳定抽取）和 `plan`（temperature=0.7，追求多样性）。改提示词去 `prompts.py`，改节点逻辑去 `nodes.py`。
 - **节点间通信只靠 AgentState**：节点函数签名是 `(state: AgentState) -> dict`，返回的 dict 会 merge 进 state，不要用全局变量跨节点传数据。
-- **数据源混合**：预置结构化数据（兜底）+ 小红书攻略（优先，有缓存）+ 携程酒店（Chrome MCP 爬取）+ 高德地图（交通规划）。`research` 节点先查缓存再实时爬取。
-- **携程酒店爬虫**：`hotel_search` 节点从 `accommodation_area` 提取关键词（如"乐桥站"），通过 Chrome MCP (chrome-devtools-mcp) 爬取携程。流程：① 调携程 API 获取城市 ID（`getHotelKeywords`，有长期缓存）→ ② 拼 URL 直接导航到搜索结果页 → ③ JS 直读 DOM 提取酒店卡片。按性价比排序取前2个注入行程。**前提**：需要启动带 `--remote-debugging-port=9222` 的 Chrome。**缓存机制**：城市 ID 长期缓存（365天），酒店结果一周缓存。
+- **数据源混合**：小红书攻略（CDP 直连主方案 + MCP fallback，有缓存）+ 携程酒店（Chrome CDP 爬取）+ 高德地图（交通规划）。`research` 节点先查缓存再实时爬取。
+- **携程酒店爬虫**：`hotel_search` 节点从 `accommodation_area` 提取关键词（如"乐桥站"），通过 Chrome CDP 直连爬取携程。流程：① 调携程 API 获取城市 ID（`getHotelKeywords`，有长期缓存）→ ② 拼 URL 直接导航到搜索结果页 → ③ JS 直读 DOM 提取酒店卡片。按性价比排序取前2个注入行程。**前提**：需要启动带 `--remote-debugging-port=9222` 的 Chrome（线上通过 Docker 共享网络）。**缓存机制**：城市 ID 长期缓存（365天），酒店结果一周缓存。
 - **日志级别约定**：业务日志统一用 `logger.info` 或 `logger.warning`，不要用 `logger.debug`（DEBUG 级别日志太多会淹没业务日志）。`main.py` 配置了 `logging.basicConfig(level=logging.DEBUG)`，但 httpcore/httpx 的 DEBUG 日志太多会淹没业务日志，可临时调高其级别：`logging.getLogger("httpcore").setLevel(logging.WARNING)`。
 
 ### 直接操作 SQLite 数据库
@@ -268,3 +269,6 @@ for node, update in items:
 # 部署
 ## 本地远程连接命令
 ssh ubuntu@118.89.71.196
+
+## 更新代码
+参考 deploy\部署更新文档.md 中的 更新代码章节

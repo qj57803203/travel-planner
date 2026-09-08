@@ -13,7 +13,8 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import XhsNoteCache
 from app.tools import amap, xhs_mcp
-from app.tools import xhs_browser
+# CDP 直连方案已注释，保留作为降级参考（2026-09 迁移到 MCP 主力方案）
+# from app.tools import xhs_browser
 
 DEFAULT_PREFERENCES = {
     "destination": "",
@@ -170,7 +171,10 @@ def extract_preferences(state: AgentState) -> dict:
 
 
 def research(state: AgentState) -> dict:
-    """节点 2：搜集信息素材 —— 预置结构化数据（兜底）+ 小红书攻略笔记（优先）。
+    """节点 2：搜集信息素材 —— 小红书攻略笔记。
+
+    小红书采集使用 MCP 方案（xiaohongshu-mcp 容器，通过 MCP 协议调用）。
+    CDP 直连方案已注释保留，可作为降级参考。
 
     Returns:
         {
@@ -201,7 +205,8 @@ def research(state: AgentState) -> dict:
     }
 
     # 2. 小红书笔记 —— 先查一周内目的地缓存，命中秒回；未命中才实时爬取并写缓存
-    #    优先用浏览器方案（Playwright CDP，不需要 MCP 容器），MCP 作为 fallback
+    #    使用 MCP 方案（xiaohongshu-mcp 容器，通过 MCP 协议调用）
+    #    ─── CDP 直连方案已注释，保留作为降级参考 ───
     if dest:
         cached = _load_xhs_cache(dest)
         if cached:
@@ -212,22 +217,24 @@ def research(state: AgentState) -> dict:
             query = f"{dest} 旅游攻略{' ' + interests if interests else ''}"
             writer = _stream_writer()
 
-            # 优先浏览器方案
+            # ── MCP 主力方案 ──
             notes, err = [], ""
-            if xhs_browser.enabled():
-                logger.info("小红书：使用浏览器方案")
-                notes, err = xhs_browser.collect_xhs_sources_sync(
-                    query,
-                    on_note=lambda i, note: _emit_xhs_note(writer, i, note),
-                )
-
-            # 浏览器方案失败 → MCP fallback
-            if not notes and xhs_mcp.enabled():
-                logger.info("小红书：浏览器方案无结果，尝试 MCP fallback")
+            if xhs_mcp.enabled():
+                logger.info("小红书：使用 MCP 方案采集笔记")
                 notes, err = xhs_mcp.collect_xhs_sources_sync(
                     query,
                     on_note=lambda i, note: _emit_xhs_note(writer, i, note),
                 )
+            else:
+                logger.warning("小红书：MCP 未启用（XHS_MCP_URL 未配置），跳过采集")
+
+            # ── CDP 直连方案（已注释，保留作为降级参考） ──
+            # if not notes and xhs_browser.enabled():
+            #     logger.info("小红书：MCP 方案无结果，尝试 CDP 直连 fallback")
+            #     notes, err = xhs_browser.collect_xhs_sources_sync(
+            #         query,
+            #         on_note=lambda i, note: _emit_xhs_note(writer, i, note),
+            #     )
 
             research_info["xhs_notes"] = notes
             _save_xhs_cache(dest, notes)

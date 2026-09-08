@@ -3,25 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>小红书登录配置 - 旅行规划 Agent</title>
+  <title>小红书登录 - 旅行规划 Agent</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; line-height: 1.6; }
-    .container { max-width: 720px; margin: 40px auto; padding: 0 20px; }
+    .container { max-width: 520px; margin: 40px auto; padding: 0 20px; }
     .card { background: #fff; border-radius: 12px; padding: 32px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
     h1 { font-size: 24px; margin-bottom: 8px; }
     .subtitle { color: #666; margin-bottom: 24px; }
-    h2 { font-size: 18px; margin-bottom: 16px; color: #ff2442; }
-    .step { display: flex; gap: 12px; margin-bottom: 16px; }
-    .step-num { background: #ff2442; color: #fff; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: bold; flex-shrink: 0; }
-    .step-content { flex: 1; }
-    .step-content strong { display: block; margin-bottom: 4px; }
-    .step-content .desc { color: #666; font-size: 14px; }
-    code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
-    pre { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; margin: 8px 0; }
-    textarea { width: 100%; height: 120px; border: 2px solid #e0e0e0; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 13px; resize: vertical; transition: border-color 0.2s; }
-    textarea:focus { outline: none; border-color: #ff2442; }
-    .btn { background: #ff2442; color: #fff; border: none; padding: 12px 32px; border-radius: 8px; font-size: 16px; cursor: pointer; transition: background 0.2s; margin-top: 12px; }
+    .btn { background: #ff2442; color: #fff; border: none; padding: 12px 32px; border-radius: 8px; font-size: 16px; cursor: pointer; transition: background 0.2s; }
     .btn:hover { background: #e61e3a; }
     .btn:disabled { background: #ccc; cursor: not-allowed; }
     .btn-secondary { background: #666; margin-left: 12px; }
@@ -29,262 +19,195 @@
     .status { margin-top: 16px; padding: 12px; border-radius: 8px; display: none; }
     .status.success { display: block; background: #e8f5e9; color: #2e7d32; }
     .status.error { display: block; background: #ffebee; color: #c62828; }
+    .status.info { display: block; background: #e3f2fd; color: #1565c0; }
     .hint { background: #fff8e1; border-left: 4px solid #ffc107; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; font-size: 14px; }
-    .method-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
-    .method-tab { padding: 8px 20px; border: 2px solid #e0e0e0; border-radius: 8px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
-    .method-tab.active { border-color: #ff2442; color: #ff2442; background: #fff5f7; }
-    .method-panel { display: none; }
-    .method-panel.active { display: block; }
-    .cookie-format { font-size: 12px; color: #999; margin-top: 4px; }
+    .qr-area { text-align: center; margin: 20px 0; }
+    .qr-area img { max-width: 280px; border: 2px solid #e0e0e0; border-radius: 8px; }
+    .steps { text-align: center; color: #666; font-size: 14px; margin-top: 16px; }
+    .steps p { margin-bottom: 4px; }
+    .countdown { color: #ff2442; font-weight: bold; margin-top: 8px; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="card">
-      <h1>🔐 小红书登录配置</h1>
-      <p class="subtitle">旅行规划 Agent 需要小红书登录态来搜索攻略笔记。Cookie 有效期约 7-30 天，过期后需重新获取。</p>
+      <h1>🔐 小红书登录</h1>
+      <p class="subtitle">旅行规划 Agent 需要小红书登录态来搜索攻略笔记。Cookie 有效期约 7-30 天。</p>
 
-      <!-- 实时扫码登录区域 -->
-      <div id="scan-login-section" style="display: none; margin-bottom: 24px;">
-        <h2>📱 扫码登录（推荐）</h2>
-        <div class="hint">💡 检测到小红书需要登录，请用手机 App 扫描下方二维码完成登录</div>
-        <div style="text-align: center; margin: 20px 0;">
-          <img id="login-screenshot" src="" alt="登录页截图" style="max-width: 400px; border: 2px solid #e0e0e0; border-radius: 8px;">
-        </div>
-        <div style="text-align: center; color: #666; font-size: 14px;">
-          <p>1. 打开小红书 App</p>
-          <p>2. 点击右上角「+」→「扫一扫」</p>
-          <p>3. 扫描上方二维码</p>
-          <p id="login-status" style="margin-top: 12px; color: #ff2442;"></p>
-        </div>
-      </div>
-
-      <div class="method-tabs">
-        <div class="method-tab active" onclick="switchTab('browser')">方式一：浏览器导出</div>
-        <div class="method-tab" onclick="switchTab('vnc')">方式二：虚拟桌面登录</div>
-      </div>
-
-      <!-- 方式一：浏览器导出 Cookie -->
-      <div id="panel-browser" class="method-panel active">
-        <h2>从浏览器导出 Cookie</h2>
-
-        <div class="step">
-          <div class="step-num">1</div>
-          <div class="step-content">
-            <strong>在本地浏览器登录小红书</strong>
-            <div class="desc">访问 <a href="https://www.xiaohongshu.com" target="_blank">www.xiaohongshu.com</a> 并完成登录</div>
-          </div>
-        </div>
-
-        <div class="step">
-          <div class="step-num">2</div>
-          <div class="step-content">
-            <strong>打开开发者工具（F12）→ Network 标签</strong>
-            <div class="desc">刷新页面，在请求列表中点击任意一个请求</div>
-          </div>
-        </div>
-
-        <div class="step">
-          <div class="step-num">3</div>
-          <div class="step-content">
-            <strong>复制 Cookie 请求头</strong>
-            <div class="desc">在 Request Headers 中找到 <code>Cookie</code> 行，右键复制完整值</div>
-          </div>
-        </div>
-
-        <div class="step">
-          <div class="step-num">4</div>
-          <div class="step-content">
-            <strong>粘贴到下方并提交</strong>
-          </div>
-        </div>
-
-        <textarea id="cookieInput" placeholder="粘贴 Cookie 字符串（格式：name1=value1; name2=value2; ...）"></textarea>
-        <div class="cookie-format">支持格式：分号分隔的 key=value 字符串，或 JSON 数组格式</div>
-      </div>
-
-      <!-- 方式二：虚拟桌面登录 -->
-      <div id="panel-vnc" class="method-panel">
-        <h2>通过虚拟桌面登录</h2>
-
-        <div class="step">
-          <div class="step-num">1</div>
-          <div class="step-content">
-            <strong>启动登录浏览器容器</strong>
-            <div class="desc">在服务器执行：</div>
-            <pre>cd ~/travel-planner/deploy
-docker compose --profile login up -d xhs-browser</pre>
-          </div>
-        </div>
-
-        <div class="step">
-          <div class="step-num">2</div>
-          <div class="step-content">
-            <strong>访问虚拟桌面</strong>
-            <div class="desc">浏览器打开 <code>http://服务器IP:6080</code>，输入密码 <code>xhs123</code></div>
-          </div>
-        </div>
-
-        <div class="step">
-          <div class="step-num">3</div>
-          <div class="step-content">
-            <strong>在虚拟桌面中登录小红书</strong>
-            <div class="desc">打开桌面的 Firefox 浏览器，访问 xiaohongshu.com 并登录</div>
-          </div>
-        </div>
-
-        <div class="step">
-          <div class="step-num">4</div>
-          <div class="step-content">
-            <strong>运行登录脚本导出 Cookie</strong>
-            <div class="desc">在虚拟桌面中打开终端（桌面右键 → Open Terminal），执行：</div>
-            <pre>python3 /app/xhs_login.py</pre>
-            <div class="desc">脚本会自动提取浏览器 Cookie 并保存</div>
-          </div>
-        </div>
-
-        <div class="hint">💡 虚拟桌面方式适合首次配置，后续 Cookie 过期可用方式一快速更新</div>
-      </div>
-    </div>
-
-    <!-- 提交区域 -->
-    <div class="card">
-      <h2>提交 Cookie</h2>
-      <p style="margin-bottom: 12px; color: #666;">将从浏览器复制的 Cookie 粘贴到上方输入框，点击保存。</p>
-      <button class="btn" id="submitBtn" onclick="submitCookie()">💾 保存 Cookie</button>
-      <button class="btn btn-secondary" onclick="checkStatus()">🔍 检查状态</button>
+      <!-- 状态区域 -->
       <div id="status" class="status"></div>
+
+      <!-- 已登录状态 -->
+      <div id="logged-in" style="display: none; text-align: center; padding: 20px 0;">
+        <p style="font-size: 48px;">✅</p>
+        <p style="font-size: 18px; margin-top: 12px;">小红书已登录</p>
+        <p style="color: #666; margin-top: 8px;">Cookie 有效，可正常搜索攻略</p>
+      </div>
+
+      <!-- 未登录：获取二维码 -->
+      <div id="login-section">
+        <div class="hint">💡 点击下方按钮获取二维码，用手机小红书 App 扫码登录</div>
+
+        <div style="text-align: center; margin: 20px 0;">
+          <button class="btn" id="getQrBtn" onclick="getQrcode()">📱 获取登录二维码</button>
+        </div>
+
+        <!-- 二维码展示区域（获取后显示） -->
+        <div id="qr-section" style="display: none;">
+          <div class="qr-area">
+            <img id="qr-img" src="" alt="登录二维码">
+          </div>
+          <div class="steps">
+            <p>1. 打开小红书 App</p>
+            <p>2. 点击右上角「+」→「扫一扫」</p>
+            <p>3. 扫描上方二维码</p>
+            <p class="countdown" id="countdown"></p>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- 状态信息 -->
+    <!-- 说明 -->
     <div class="card">
       <h2>ℹ️ 说明</h2>
       <ul style="padding-left: 20px; color: #666; font-size: 14px;">
-        <li>Cookie 保存后立即生效，无需重启服务</li>
-        <li>有效期约 7-30 天，搜索返回空结果时说明已过期</li>
-        <li>Cookie 仅存储在服务器本地，不会上传到第三方</li>
-        <li>关键 Cookie 字段：<code>web_session</code>、<code>a1</code>、<code>webId</code></li>
+        <li>二维码有效期约 4 分钟，超时需重新获取</li>
+        <li>扫码登录后 Cookie 自动保存，无需手动操作</li>
+        <li>Cookie 有效期约 7-30 天，过期后重新扫码即可</li>
+        <li>登录态仅存储在服务器本地，不会上传到第三方</li>
       </ul>
     </div>
   </div>
 
   <script>
-    // 登录截图轮询
-    let loginPollingTimer = null;
+    let countdownTimer = null;
+    let pollTimer = null;
 
-    function switchTab(name) {
-      document.querySelectorAll('.method-tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.method-panel').forEach(p => p.classList.remove('active'));
-      event.target.classList.add('active');
-      document.getElementById('panel-' + name).classList.add('active');
-    }
+    // 页面加载时检查登录状态
+    checkLoginStatus();
 
-    // 检查登录状态并显示/隐藏扫码区域
     async function checkLoginStatus() {
+      const status = document.getElementById('status');
       try {
         const resp = await fetch('/api/xhs-login-status');
         const data = await resp.json();
 
-        const scanSection = document.getElementById('scan-login-section');
-        const statusText = document.getElementById('login-status');
-
-        if (data.waiting) {
-          // 显示扫码区域
-          scanSection.style.display = 'block';
-          statusText.textContent = '等待扫码登录...';
-
-          // 开始轮询截图
-          if (!loginPollingTimer) {
-            loginPollingTimer = setInterval(refreshScreenshot, 3000);
-            refreshScreenshot(); // 立即刷新一次
-          }
+        if (data.logged_in) {
+          document.getElementById('logged-in').style.display = 'block';
+          document.getElementById('login-section').style.display = 'none';
+          status.className = 'status success';
+          status.textContent = '✅ ' + (data.message || '已登录');
         } else {
-          // 隐藏扫码区域
-          scanSection.style.display = 'none';
-          if (loginPollingTimer) {
-            clearInterval(loginPollingTimer);
-            loginPollingTimer = null;
-          }
+          document.getElementById('logged-in').style.display = 'none';
+          document.getElementById('login-section').style.display = 'block';
+          status.className = 'status info';
+          status.textContent = '⚠️ ' + (data.message || '未登录，请扫码登录');
         }
       } catch (e) {
-        console.log('检查登录状态失败:', e);
-      }
-    }
-
-    // 刷新截图
-    async function refreshScreenshot() {
-      try {
-        const img = document.getElementById('login-screenshot');
-        const timestamp = new Date().getTime();
-        img.src = '/api/xhs-login-screenshot?t=' + timestamp;
-      } catch (e) {
-        console.log('刷新截图失败:', e);
-      }
-    }
-
-    // 页面加载时检查状态
-    checkLoginStatus();
-    // 每 5 秒检查一次登录状态
-    setInterval(checkLoginStatus, 5000);
-
-    async function submitCookie() {
-      const input = document.getElementById('cookieInput').value.trim();
-      const status = document.getElementById('status');
-      const btn = document.getElementById('submitBtn');
-
-      if (!input) {
         status.className = 'status error';
-        status.textContent = '❌ 请先粘贴 Cookie 内容';
-        return;
+        status.textContent = '❌ 检查登录状态失败：' + e.message;
       }
+    }
+
+    async function getQrcode() {
+      const btn = document.getElementById('getQrBtn');
+      const status = document.getElementById('status');
+      const qrSection = document.getElementById('qr-section');
 
       btn.disabled = true;
-      btn.textContent = '保存中...';
+      btn.textContent = '获取中...';
+      status.className = 'status info';
+      status.textContent = '⏳ 正在启动浏览器获取二维码（可能需要 10-20 秒）...';
 
       try {
-        const resp = await fetch('/api/xhs-cookies', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cookies: input }),
-        });
+        const resp = await fetch('/api/xhs-qrcode');
         const data = await resp.json();
 
-        if (resp.ok) {
+        if (data.already_logged_in) {
+          // 已登录，刷新状态
+          document.getElementById('logged-in').style.display = 'block';
+          document.getElementById('login-section').style.display = 'none';
           status.className = 'status success';
-          status.textContent = '✅ ' + data.message;
-        } else {
-          status.className = 'status error';
-          status.textContent = '❌ ' + (data.detail || '保存失败');
+          status.textContent = '✅ 已登录，无需扫码';
+          return;
         }
+
+        if (!resp.ok) {
+          throw new Error(data.detail || '获取二维码失败');
+        }
+
+        // 显示二维码
+        document.getElementById('qr-img').src = data.qrcode;
+        qrSection.style.display = 'block';
+        status.className = 'status info';
+        status.textContent = '📱 请用手机小红书 App 扫描二维码';
+
+        // 倒计时
+        startCountdown(data.timeout || 240);
+
+        // 轮询登录状态
+        startPolling();
+
       } catch (e) {
         status.className = 'status error';
-        status.textContent = '❌ 网络错误：' + e.message;
+        status.textContent = '❌ ' + e.message;
+        qrSection.style.display = 'none';
       } finally {
         btn.disabled = false;
-        btn.textContent = '💾 保存 Cookie';
+        btn.textContent = '📱 获取登录二维码';
       }
     }
 
-    async function checkStatus() {
-      const status = document.getElementById('status');
-      try {
-        const resp = await fetch('/api/xhs-cookies');
-        const data = await resp.json();
-        if (data.has_cookies) {
-          status.className = 'status success';
-          status.textContent = '✅ Cookie 已配置（' + data.cookie_count + ' 个字段，' + data.source + '）';
+    function startCountdown(seconds) {
+      const el = document.getElementById('countdown');
+      if (countdownTimer) clearInterval(countdownTimer);
+
+      let remaining = seconds;
+      el.textContent = `二维码有效时间：${remaining} 秒`;
+
+      countdownTimer = setInterval(() => {
+        remaining--;
+        if (remaining <= 0) {
+          clearInterval(countdownTimer);
+          el.textContent = '二维码已过期，请重新获取';
+          stopPolling();
         } else {
-          status.className = 'status error';
-          status.textContent = '⚠️ 尚未配置 Cookie';
+          el.textContent = `二维码有效时间：${remaining} 秒`;
         }
-      } catch (e) {
-        status.className = 'status error';
-        status.textContent = '❌ 查询失败：' + e.message;
-      }
+      }, 1000);
     }
 
-    // 页面加载时检查状态
-    checkStatus();
+    function startPolling() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(async () => {
+        try {
+          const resp = await fetch('/api/xhs-login-status');
+          const data = await resp.json();
+          if (data.logged_in) {
+            // 登录成功！
+            stopPolling();
+            if (countdownTimer) clearInterval(countdownTimer);
+
+            document.getElementById('logged-in').style.display = 'block';
+            document.getElementById('login-section').style.display = 'none';
+            document.getElementById('qr-section').style.display = 'none';
+
+            const status = document.getElementById('status');
+            status.className = 'status success';
+            status.textContent = '✅ 登录成功！Cookie 已自动保存';
+          }
+        } catch (e) {
+          console.log('轮询登录状态失败:', e);
+        }
+      }, 3000);  // 每 3 秒检查一次
+    }
+
+    function stopPolling() {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    }
   </script>
 </body>
 </html>

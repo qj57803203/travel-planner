@@ -1,6 +1,7 @@
 services:
-  # ── Chrome（小红书 + 携程共用）──────────────────────────
+  # ── Chrome（携程酒店爬虫共用）──────────────────────────
   # 后端通过 network_mode 共享此容器的网络，直连 localhost:9223
+  # 注意：小红书已迁移到 MCP 方案，Chrome 仅供携程使用
   chrome:
     image: chromedp/headless-shell:latest
     container_name: travel-chrome
@@ -47,12 +48,12 @@ services:
     networks:
       - app-net
 
-  # ── 小红书 MCP（可选，仅作为 fallback）────────────────────
+  # ── 小红书 MCP（主力方案）──────────────────────────────
+  # 提供小红书搜索/详情/登录等 MCP 工具，后端通过 MCP 协议调用
+  # 登录方式：后端调 get_login_qrcode → 返回二维码 → 开发者扫码
   xiaohongshu-mcp:
     image: crpi-hocnvtkomt7w9v8t.cn-beijing.personal.cr.aliyuncs.com/xpzouying/xiaohongshu-mcp
     container_name: xiaohongshu-mcp
-    profiles:
-      - mcp
     restart: unless-stopped
     tty: true
     volumes:
@@ -63,23 +64,6 @@ services:
       - XDG_CONFIG_HOME=/app/data/config
     expose:
       - "18060"
-    networks:
-      - app-net
-
-  # ── 小红书登录浏览器（按需启动）────────────────────────
-  xhs-browser:
-    image: dorowu/ubuntu-desktop-lxde-vnc:latest
-    container_name: xhs-browser
-    profiles:
-      - login
-    ports:
-      - "6080:80"
-    volumes:
-      - ./xhs/browser-data:/root
-      - ./xhs/data:/app/xhs_data
-      - ../backend/app/tools/xhs_login.py:/app/xhs_login.py:ro
-    environment:
-      - VNC_PASSWORD=${VNC_PASSWORD:-xhs123}
     networks:
       - app-net
 

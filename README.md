@@ -35,7 +35,7 @@ backend/
     routers/
       trips.py           # 行程接口：生成 / 列表 / 详情
   scripts/
-    xhs_login.py         # 小红书扫码登录辅助脚本
+    xhs_login.py         # 小红书 MCP 扫码登录辅助脚本（本地调试用）
 frontend/
   src/
     views/Home.vue       # 三段式主页面

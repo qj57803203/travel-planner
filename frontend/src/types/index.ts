@@ -41,8 +41,8 @@ export interface XhsNote {
   url: string
   summary: string
   cover: string
-  author: string       // 小红书作者名
-  like_count: string   // 点赞数（如 "9958"、"4.3万"）
+  author?: string       // 小红书作者名（MCP 方案不一定返回）
+  like_count?: string   // 点赞数（MCP 方案不一定返回）
 }
 
 export interface ResearchInfo {

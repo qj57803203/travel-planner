@@ -132,13 +132,29 @@ class XHSToolNotAllowed(RuntimeError):
     """调用了非只读白名单内的小红书工具。"""
 
 
-async def _call_tool(tool: str, args: dict) -> str:
-    """单次 MCP 工具调用，返回文本内容。整体超时兜底（MCP 服务僵死不能拖垮主流程）。"""
+async def _call_tool_on_session(session, tool: str, args: dict) -> str:
+    """在已有 MCP session 上调用工具，返回文本内容。"""
     if tool not in _READONLY_TOOLS:
         logger.error("拒绝调用非只读小红书工具 %r（白名单：%s）", tool, sorted(_READONLY_TOOLS))
         raise XHSToolNotAllowed(f"xhs tool not allowed: {tool}")
 
-    # 延迟导入：未启用小红书时无需安装 mcp 包，app 也能正常启动
+    import time
+    t0 = time.time()
+    logger.info("[MCP] 调用工具 %s", tool)
+    res = await session.call_tool(tool, args)
+    t1 = time.time()
+    logger.info("[MCP] 工具调用耗时 %.1fs，返回 %d 个 content", t1 - t0, len(res.content))
+    return "\n".join(
+        c.text for c in res.content if getattr(c, "type", "") == "text"
+    )
+
+
+async def _call_tool(tool: str, args: dict) -> str:
+    """单次 MCP 工具调用（独立连接），返回文本内容。用于登录管理等非采集场景。"""
+    if tool not in _READONLY_TOOLS:
+        logger.error("拒绝调用非只读小红书工具 %r（白名单：%s）", tool, sorted(_READONLY_TOOLS))
+        raise XHSToolNotAllowed(f"xhs tool not allowed: {tool}")
+
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client
 
@@ -266,10 +282,11 @@ async def check_login_status() -> tuple[bool, str]:
         return False, err
 
 
-async def search_notes(keyword: str) -> tuple[list[dict], str]:
+async def search_notes(keyword: str, session=None) -> tuple[list[dict], str]:
     """搜笔记 → ([{feed_id, xsec_token, title, cover}], 错误信息)；失败返回 ([], 原因)。
 
     搜索是整条链路的网关（失败 = 这轮小红书全军覆没），冷加载偶发超时——重试一次。
+    session: 可选的 MCP session，传入时复用连接；否则新建独立连接。
     """
     if not enabled():
         return [], ""
@@ -277,7 +294,11 @@ async def search_notes(keyword: str) -> tuple[list[dict], str]:
     last_err = ""
     for attempt in range(2):
         try:
-            feeds = _parse_feeds(await _call_tool("search_feeds", {"keyword": keyword}))
+            if session:
+                text = await _call_tool_on_session(session, "search_feeds", {"keyword": keyword})
+            else:
+                text = await _call_tool("search_feeds", {"keyword": keyword})
+            feeds = _parse_feeds(text)
             logger.info("小红书搜索完成，返回 %d 篇笔记", len(feeds))
             return feeds, ""
         except Exception as e:  # noqa: BLE001 — 超时/未登录/服务挂了都降级，但把原因带出去
@@ -287,14 +308,18 @@ async def search_notes(keyword: str) -> tuple[list[dict], str]:
     return [], last_err
 
 
-async def note_detail(feed_id: str, xsec_token: str) -> dict | None:
-    """取笔记详情 → {title, desc, cover}；失败返回 None。"""
+async def note_detail(feed_id: str, xsec_token: str, session=None) -> dict | None:
+    """取笔记详情 → {title, desc, cover}；失败返回 None。
+    session: 可选的 MCP session，传入时复用连接；否则新建独立连接。
+    """
     if not enabled():
         return None
     try:
-        det = _parse_detail(await _call_tool(
-            "get_feed_detail", {"feed_id": feed_id, "xsec_token": xsec_token}
-        ))
+        if session:
+            text = await _call_tool_on_session(session, "get_feed_detail", {"feed_id": feed_id, "xsec_token": xsec_token})
+        else:
+            text = await _call_tool("get_feed_detail", {"feed_id": feed_id, "xsec_token": xsec_token})
+        det = _parse_detail(text)
         if det is not None:
             logger.info("    详情成功：《%s》（正文 %d 字）", det["title"][:24], len(det["desc"]))
         return det
@@ -346,43 +371,65 @@ async def _collect_within_budget(
     """`out` 由调用方传入：预算超时时外层直接拿走已追加的部分（部分收成）。
 
     返回错误信息（空串=无错误）：搜索失败把网关错误直接带回；详情熔断且一无所获时给简短提示。
+    整个采集过程复用同一个 MCP 连接，避免重复建立连接的开销。
     """
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
+
     n = limit or settings.xhs_notes_per_turn
-    feeds, search_err = await search_notes(query)
-    if search_err:
-        return search_err
-    attempts = 0
-    consecutive_failures = 0
-    for f in feeds:
-        if len(out) >= n or attempts >= n + 2:
-            break
-        attempts += 1
-        logger.info("  [%d/%d] 抓取第 %d 篇：《%s》",
-                    len(out) + 1, n, attempts, (f.get("title") or "无标题")[:30])
-        det = await note_detail(f["feed_id"], f["xsec_token"])
-        if det is None:
-            consecutive_failures += 1
-            if consecutive_failures >= 2:
-                logger.warning("  连续 %d 次失败，熔断停止（小红书可能异常）", consecutive_failures)
-                return "" if out else "详情连续失败，已熔断"
-            continue
-        consecutive_failures = 0
-        if len(det["desc"]) < 100:  # 太短的笔记（纯图/广告位）不当来源，但不计故障
-            logger.info("    跳过：正文过短（%d 字，纯图/广告位）", len(det["desc"]))
-            continue
-        note = {
-            "title": f"小红书｜{det['title'][:40]}",
-            "url": note_url(f["feed_id"]),
-            "summary": det["desc"][:1500],  # 笔记细节是攻略质量原料，给足；截断控 token
-            "cover": det.get("cover") or f.get("cover") or "",
-        }
-        out.append(note)
-        logger.info("  已采集第 %d 篇：《%s》", len(out), det["title"][:30])
-        if on_note is not None:
-            try:
-                on_note(len(out), note)
-            except Exception:  # noqa: BLE001 — 进度回调绝不能影响采集
-                pass
+
+    # 建立一个长期连接，整个采集过程复用
+    import time
+    t0 = time.time()
+    logger.info("[MCP] 建立长期连接用于采集，URL=%s", settings.xhs_mcp_url)
+    async with streamablehttp_client(settings.xhs_mcp_url) as (r, w, _):
+        t1 = time.time()
+        logger.info("[MCP] 连接建立耗时 %.1fs，初始化会话", t1 - t0)
+        async with ClientSession(r, w) as session:
+            await session.initialize()
+            t2 = time.time()
+            logger.info("[MCP] 会话初始化耗时 %.1fs，开始采集", t2 - t1)
+
+            # 搜索笔记（复用连接）
+            feeds, search_err = await search_notes(query, session=session)
+            if search_err:
+                return search_err
+
+            # 逐篇获取详情（复用连接）
+            attempts = 0
+            consecutive_failures = 0
+            for f in feeds:
+                if len(out) >= n or attempts >= n + 2:
+                    break
+                attempts += 1
+                logger.info("  [%d/%d] 抓取第 %d 篇：《%s》",
+                            len(out) + 1, n, attempts, (f.get("title") or "无标题")[:30])
+                det = await note_detail(f["feed_id"], f["xsec_token"], session=session)
+                if det is None:
+                    consecutive_failures += 1
+                    if consecutive_failures >= 2:
+                        logger.warning("  连续 %d 次失败，熔断停止（小红书可能异常）", consecutive_failures)
+                        return "" if out else "详情连续失败，已熔断"
+                    continue
+                consecutive_failures = 0
+                if len(det["desc"]) < 100:  # 太短的笔记（纯图/广告位）不当来源，但不计故障
+                    logger.info("    跳过：正文过短（%d 字，纯图/广告位）", len(det["desc"]))
+                    continue
+                note = {
+                    "title": f"小红书｜{det['title'][:40]}",
+                    "url": note_url(f["feed_id"]),
+                    "summary": det["desc"][:1500],  # 笔记细节是攻略质量原料，给足；截断控 token
+                    "cover": det.get("cover") or f.get("cover") or "",
+                }
+                out.append(note)
+                logger.info("  已采集第 %d 篇：《%s》", len(out), det["title"][:30])
+                if on_note is not None:
+                    try:
+                        on_note(len(out), note)
+                    except Exception:  # noqa: BLE001 — 进度回调绝不能影响采集
+                        pass
+
+    logger.info("[MCP] 采集完成，总耗时 %.1fs，共 %d 篇", time.time() - t0, len(out))
     return ""
 
 
