@@ -8,9 +8,6 @@ import App from './App.vue'
 
 const app = createApp(App)
 
-// 禁用 Vue DevTools
-app.config.devtools = false
-
 app.use(createPinia())
 app.use(ElementPlus)
 app.mount('#app')
