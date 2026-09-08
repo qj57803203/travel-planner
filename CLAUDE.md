@@ -271,4 +271,4 @@ for node, update in items:
 ssh ubuntu@118.89.71.196
 
 ## 更新代码
-参考 deploy\部署更新文档.md 中的 更新代码章节
+用子agent执行，参考 deploy\部署更新文档.md 中的 更新代码章节
