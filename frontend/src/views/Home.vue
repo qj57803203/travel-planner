@@ -334,7 +334,7 @@ onMounted(() => store.loadHistory())
   margin: 0 auto;
   padding: 20px 20px 56px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 420px;
+  grid-template-columns: minmax(0, 1fr) 470px;
   gap: 20px;
   align-items: start;
 }

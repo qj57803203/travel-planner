@@ -54,10 +54,10 @@ const openHotel = () => {
 .hotel-card {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 16px;
+  gap: 10px;
+  padding: 8px 10px;
   background: rgba(255, 255, 255, 0.95);
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   cursor: pointer;
   transition: all 0.2s ease;
@@ -67,15 +67,15 @@ const openHotel = () => {
 .hotel-card:hover {
   background: #fff;
   border-color: #409eff;
-  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.15);
-  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.15);
+  transform: translateY(-1px);
 }
 
 .hotel-image {
   flex-shrink: 0;
-  width: 120px;
-  height: 90px;
-  border-radius: 8px;
+  width: 80px;
+  height: 60px;
+  border-radius: 6px;
   overflow: hidden;
 }
 
@@ -93,7 +93,7 @@ const openHotel = () => {
   justify-content: center;
   background: #f5f7fa;
   color: #c0c4cc;
-  font-size: 32px;
+  font-size: 24px;
 }
 
 .hotel-info {
@@ -102,10 +102,10 @@ const openHotel = () => {
 }
 
 .hotel-name {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
   color: #303133;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -114,16 +114,16 @@ const openHotel = () => {
 .hotel-meta {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 8px;
-  font-size: 13px;
+  gap: 12px;
+  margin-bottom: 3px;
+  font-size: 12px;
   color: #606266;
 }
 
 .hotel-meta .rating {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   color: #f7ba2a;
   font-weight: 600;
 }
@@ -131,7 +131,7 @@ const openHotel = () => {
 .hotel-meta .location {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   color: #909399;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -139,7 +139,7 @@ const openHotel = () => {
 }
 
 .hotel-price {
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .price {
@@ -148,22 +148,22 @@ const openHotel = () => {
 }
 
 .price .currency {
-  font-size: 13px;
+  font-size: 11px;
 }
 
 .price .amount {
-  font-size: 20px;
+  font-size: 16px;
 }
 
 .price .unit {
-  font-size: 12px;
+  font-size: 11px;
   color: #909399;
   margin-left: 2px;
 }
 
 .price-unavailable {
   color: #909399;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .hotel-action {
@@ -177,7 +177,7 @@ const openHotel = () => {
 
   .hotel-image {
     width: 100%;
-    height: 160px;
+    height: 120px;
   }
 
   .hotel-action {

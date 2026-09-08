@@ -13,14 +13,19 @@
     <!-- 结果 -->
     <template v-else>
       <div class="result-head">
-        <div class="result-title">
-          <h2>{{ store.current.preferences.destination + '行程详情' }}</h2>
+        <div class="result-title-row">
+          <h2>{{ store.current.preferences.destination + "行程详情" }}</h2>
           <div class="chips">
             <span class="chip chip-days">
-              <Icon name="calendar" :size="13" />{{ store.current.preferences.days }} 天
+              <Icon name="calendar" :size="11" />{{
+                store.current.preferences.days
+              }}
+              天
             </span>
             <span v-if="store.current.preferences.pace" class="chip chip-pace">
-              <Icon name="clock" :size="13" />{{ store.current.preferences.pace }}
+              <Icon name="clock" :size="11" />{{
+                store.current.preferences.pace
+              }}
             </span>
             <span
               v-for="i in store.current.preferences.interests"
@@ -29,28 +34,30 @@
             >
               {{ i }}
             </span>
-            <span
+            <!-- <span
               v-if="store.current.research.xhs_status === 'live'"
               class="chip chip-live"
             >
-              <Icon name="book" :size="13" />小红书实时
+              <Icon name="book" :size="11" />小红书实时
             </span>
             <span
               v-else-if="store.current.research.xhs_status === 'cached'"
               class="chip chip-cached"
             >
-              <Icon name="clock" :size="13" />缓存数据
-            </span>
-            <span v-if="tokenText" class="chip chip-token">{{ tokenText }}</span>
+              <Icon name="clock" :size="11" />缓存数据
+            </span> -->
+            <span v-if="tokenText" class="chip chip-token">{{
+              tokenText
+            }}</span>
           </div>
         </div>
 
         <div class="toolbar">
-          <el-button @click="onRegenerate">
-            <Icon name="refresh" :size="15" class="btn-ic" />重新生成
+          <el-button circle @click="onRegenerate" title="重新生成">
+            <Icon name="refresh" :size="15" />
           </el-button>
-          <el-button type="primary" @click="onCopy">
-            <Icon name="copy" :size="15" class="btn-ic" />复制
+          <el-button circle type="primary" @click="onCopy" title="复制">
+            <Icon name="copy" :size="15" />
           </el-button>
         </div>
       </div>
@@ -68,7 +75,9 @@
           class="departure-input"
           @keyup.enter="onSaveDeparture"
         />
-        <el-button size="small" type="primary" @click="onSaveDeparture">记住</el-button>
+        <el-button size="small" type="primary" @click="onSaveDeparture"
+          >记住</el-button
+        >
       </div>
 
       <!-- 交通规划失败提示 -->
@@ -78,7 +87,10 @@
       </div>
 
       <!-- 推荐酒店 -->
-      <!-- <div v-if="store.current.hotels && store.current.hotels.length > 0" class="hotels-section">
+      <div
+        v-if="store.current.hotels && store.current.hotels.length > 0"
+        class="hotels-section"
+      >
         <h3 class="hotels-title">🏨 推荐酒店</h3>
         <div class="hotels-list">
           <HotelCard
@@ -87,7 +99,7 @@
             :hotel="hotel"
           />
         </div>
-      </div> -->
+      </div>
 
       <el-tabs v-model="tab" class="tabs">
         <el-tab-pane label="每日行程" name="itinerary">
@@ -99,8 +111,11 @@
           <el-empty v-else description="暂无行程内容" :image-size="72" />
         </el-tab-pane>
 
-        <el-tab-pane label="信息素材" name="research">
-          <ResearchPanel v-if="store.current" :research="store.current.research" />
+        <el-tab-pane label="小红书素材" name="research">
+          <ResearchPanel
+            v-if="store.current"
+            :research="store.current.research"
+          />
         </el-tab-pane>
       </el-tabs>
 
@@ -108,7 +123,11 @@
       <div class="chat-section">
         <!-- 对话历史：用户消息气泡 -->
         <div v-if="userMessages.length" class="chat-history">
-          <div v-for="(msg, i) in userMessages" :key="i" class="chat-bubble-row">
+          <div
+            v-for="(msg, i) in userMessages"
+            :key="i"
+            class="chat-bubble-row"
+          >
             <div class="chat-bubble user-bubble">{{ msg }}</div>
           </div>
         </div>
@@ -140,7 +159,11 @@
           <el-input
             v-model="modifyInput"
             size="small"
-            :placeholder="store.loading ? '正在生成中…' : '输入修改意见，如：行程太紧了、不想去浅草寺'"
+            :placeholder="
+              store.loading
+                ? '正在生成中…'
+                : '输入修改意见，如：行程太紧了、不想住这么远'
+            "
             :disabled="store.loading"
             class="chat-input"
             @keyup.enter="onModify"
@@ -160,7 +183,9 @@
         <!-- 轮数耗尽提示 -->
         <div v-if="roundExhausted" class="chat-exhausted">
           已达最大修改次数（5轮），请
-          <el-button link type="primary" @click="onRegenerate">重新生成</el-button>
+          <el-button link type="primary" @click="onRegenerate"
+            >重新生成</el-button
+          >
           新行程
         </div>
       </div>
@@ -169,120 +194,125 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, ref, watch } from "vue";
+import { ElMessage } from "element-plus";
 
-import GenerateProgress from '@/components/GenerateProgress.vue'
-import Icon from '@/components/Icon.vue'
-import ResearchPanel from '@/components/ResearchPanel.vue'
-import { useTripStore } from '@/store/trip'
-import { renderMarkdown } from '@/utils/markdown'
+import GenerateProgress from "@/components/GenerateProgress.vue";
+import HotelCard from "@/components/HotelCard.vue";
+import Icon from "@/components/Icon.vue";
+import ResearchPanel from "@/components/ResearchPanel.vue";
+import { useTripStore } from "@/store/trip";
+import { renderMarkdown } from "@/utils/markdown";
 
-const MAX_ROUNDS = 5
+const MAX_ROUNDS = 5;
 
-const store = useTripStore()
-const tab = ref('itinerary')
-const departureInput = ref('')
-const modifyInput = ref('')
+const store = useTripStore();
+const tab = ref("itinerary");
+const departureInput = ref("");
+const modifyInput = ref("");
 
-const itineraryHtml = computed(() => renderMarkdown(store.current?.itinerary ?? ''))
+const itineraryHtml = computed(() =>
+  renderMarkdown(store.current?.itinerary ?? ""),
+);
 
 // 对话历史中用户发的消息（用于气泡展示）
 const userMessages = computed(() => {
-  const history = store.current?.chat_history ?? []
-  return history.filter((m) => m.role === 'user').map((m) => m.content)
-})
+  const history = store.current?.chat_history ?? [];
+  return history.filter((m) => m.role === "user").map((m) => m.content);
+});
 
 // 是否还能修改（轮数未耗尽 且 有当前行程）
 const canModify = computed(() => {
-  return !!store.current && store.chatRound < MAX_ROUNDS
-})
+  return !!store.current && store.chatRound < MAX_ROUNDS;
+});
 
 // 轮数是否已耗尽
 const roundExhausted = computed(() => {
-  return !!store.current && store.chatRound >= MAX_ROUNDS
-})
+  return !!store.current && store.chatRound >= MAX_ROUNDS;
+});
 
 // 根据行程内容动态生成推荐提问
 const suggestedQuestions = computed(() => {
-  const dest = store.current?.preferences?.destination || ''
-  const pace = store.current?.preferences?.pace || '适中'
-  const itinerary = store.current?.itinerary || ''
-  const interests = store.current?.preferences?.interests ?? []
+  const dest = store.current?.preferences?.destination || "";
+  const pace = store.current?.preferences?.pace || "适中";
+  const itinerary = store.current?.itinerary || "";
+  const interests = store.current?.preferences?.interests ?? [];
 
-  const questions: string[] = []
+  const questions: string[] = [];
 
   // 节奏相关
-  if (pace !== '轻松') questions.push('行程太紧了，节奏放轻松一点')
+  if (pace !== "轻松") questions.push("行程太紧了，节奏放轻松一点");
   // 景点相关：从 itinerary 提取第一个 Day 里的景点名
-  const spotMatch = itinerary.match(/[-•]\s*\*?\*?([^*\n]{2,10})\*?\*?\s*[（(]/)
-  if (spotMatch) questions.push(`不想去${spotMatch[1].trim()}，换个地方`)
+  const spotMatch = itinerary.match(
+    /[-•]\s*\*?\*?([^*\n]{2,10})\*?\*?\s*[（(]/,
+  );
+  if (spotMatch) questions.push(`不想去${spotMatch[1].trim()}，换个地方`);
   // 兴趣相关
-  if (!interests.includes('美食')) questions.push('多安排一些当地美食')
+  if (!interests.includes("美食")) questions.push("多安排一些当地美食");
   // 通用
-  if (dest) questions.push(`给${dest}加一天行程`)
-  questions.push('住宿推荐换一个区域')
+  if (dest) questions.push(`给${dest}加一天行程`);
+  questions.push("住宿推荐换一个区域");
 
-  return questions.slice(0, 4)
-})
+  return questions.slice(0, 4);
+});
 
 // 调试：监听 transit 数据变化
 watch(
   () => store.current?.transit,
   (transit) => {
-    console.log('[ItineraryView] transit data:', transit)
-    console.log('[ItineraryView] transit source:', transit?.source)
-    console.log('[ItineraryView] transit days:', transit?.days?.length)
-    console.log('[ItineraryView] transit inter_city:', transit?.inter_city)
+    console.log("[ItineraryView] transit data:", transit);
+    console.log("[ItineraryView] transit source:", transit?.source);
+    console.log("[ItineraryView] transit days:", transit?.days?.length);
+    console.log("[ItineraryView] transit inter_city:", transit?.inter_city);
   },
   { immediate: true },
-)
+);
 
 const tokenText = computed(() => {
-  const u = store.current?.usage
-  if (!u) return ''
+  const u = store.current?.usage;
+  if (!u) return "";
   const sum = (t?: { input?: number; output?: number }) =>
-    t ? (t.input || 0) + (t.output || 0) : 0
-  const parts: string[] = []
-  if (u.extract) parts.push(`抽取 ${sum(u.extract)}`)
-  if (u.plan) parts.push(`生成 ${sum(u.plan)}`)
-  return parts.length ? `${parts.join(' · ')} tokens` : ''
-})
+    t ? (t.input || 0) + (t.output || 0) : 0;
+  const parts: string[] = [];
+  // if (u.extract) parts.push(`抽取 ${sum(u.extract)}`);
+  if (u.plan) parts.push(`生成 ${sum(u.plan)}`);
+  return parts.length ? `${parts.join(" · ")} tokens` : "";
+});
 
 function onRegenerate() {
-  if (store.current) store.generate(store.current.user_input)
+  if (store.current) store.generate(store.current.user_input);
 }
 
 async function onModify() {
-  const text = modifyInput.value.trim()
-  if (!text || store.loading) return
-  modifyInput.value = ''
-  await store.modify(text)
+  const text = modifyInput.value.trim();
+  if (!text || store.loading) return;
+  modifyInput.value = "";
+  await store.modify(text);
   // 修改完成后滚到顶部看新行程
-  const resultEl = document.querySelector('.result')
-  if (resultEl) resultEl.scrollTop = 0
+  const resultEl = document.querySelector(".result");
+  if (resultEl) resultEl.scrollTop = 0;
 }
 
 function onSuggestionClick(question: string) {
-  modifyInput.value = question
-  onModify()
+  modifyInput.value = question;
+  onModify();
 }
 
 async function onCopy() {
-  if (!store.current) return
+  if (!store.current) return;
   try {
-    await navigator.clipboard.writeText(store.current.itinerary)
-    ElMessage.success('已复制到剪贴板')
+    await navigator.clipboard.writeText(store.current.itinerary);
+    ElMessage.success("已复制到剪贴板");
   } catch {
-    ElMessage.warning('复制失败，请手动选择文本')
+    ElMessage.warning("复制失败，请手动选择文本");
   }
 }
 
 async function onSaveDeparture() {
-  if (!departureInput.value.trim()) return
-  await store.saveDeparture(departureInput.value)
-  ElMessage.success('出发地已记住，下次自动补全城际交通')
-  departureInput.value = ''
+  if (!departureInput.value.trim()) return;
+  await store.saveDeparture(departureInput.value);
+  ElMessage.success("出发地已记住，下次自动补全城际交通");
+  departureInput.value = "";
 }
 </script>
 
@@ -337,26 +367,33 @@ async function onSaveDeparture() {
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
-.result-title h2 {
-  margin: 0 0 10px;
+.result-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.result-title-row h2 {
+  margin: 0;
   font-family: var(--font-serif);
   font-size: 22px;
   font-weight: 700;
   letter-spacing: 0.3px;
   color: #1e293b;
+  white-space: nowrap;
 }
 .chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12.5px;
+  gap: 3px;
+  font-size: 11px;
   color: #475569;
-  padding: 4px 10px;
+  padding: 2px 7px;
   border-radius: 999px;
   background: #f5f7fa;
   border: 1px solid #e2e8f0;
@@ -393,11 +430,8 @@ async function onSaveDeparture() {
 }
 .toolbar {
   display: flex;
-  gap: 10px;
-}
-.btn-ic {
-  margin-right: 4px;
-  vertical-align: -2px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 /* —— 设置出发地条 —— */
@@ -445,26 +479,26 @@ async function onSaveDeparture() {
 
 /* —— 推荐酒店 —— */
 .hotels-section {
-  margin-bottom: 20px;
-  padding: 16px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 16px;
+  border-radius: 10px;
   color: #fff;
 }
 
 .hotels-title {
-  margin: 0 0 16px;
-  font-size: 18px;
+  margin: 0 0 8px;
+  font-size: 14px;
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .hotels-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
 }
 
 /* —— Markdown 渲染的行程 —— */
@@ -575,19 +609,28 @@ async function onSaveDeparture() {
   animation: pulse-dot 1s ease-in-out infinite;
 }
 @keyframes pulse-dot {
-  0%, 100% { opacity: 0.3; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1.2); }
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
 }
 
 /* 推荐提问 */
 .suggestions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 10px;
 }
 .suggestions-label {
-  display: block;
-  font-size: 16px;
+  font-size: 13px;
   color: #94a3b8;
-  margin-bottom: 6px;
+  white-space: nowrap;
 }
 .suggestions-list {
   display: flex;
@@ -603,14 +646,16 @@ async function onSaveDeparture() {
   padding: 4px 12px;
   border-radius: 999px;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    color 0.15s,
+    background 0.15s;
 }
 .suggestion-chip:hover {
   border-color: #2563eb;
   color: #2563eb;
   background: #eff6ff;
 }
-
 
 .chat-input-row {
   display: flex;
@@ -629,7 +674,9 @@ async function onSaveDeparture() {
 .send-icon {
   cursor: pointer;
   color: #2563eb;
-  transition: color 0.15s, opacity 0.15s;
+  transition:
+    color 0.15s,
+    opacity 0.15s;
 }
 .send-icon:hover {
   color: #1d4ed8;
