@@ -27,7 +27,7 @@
         ▼                                    └──────────────────────────────────┘
   ┌─────────────┐    小红书 MCP 搜索+详情      ┌──────────────────────────────────┐
   │  research   │ ─────────────────────────▶ │  research:                       │
-  │  搜集素材     │    先查 SQLite 缓存(7天)     │    xhs_notes: [{title, summary}] │
+  │  搜集素材     │    先查 PostgreSQL 缓存(7天)  │    xhs_notes: [{title, summary}] │
   │  (纯代码)    │    未命中 → MCP 实时爬取      │    xhs_status: "live" | "cached" │
   └─────────────┘    命中 → 直接返回缓存        └──────────────────────────────────┘
         │
@@ -53,7 +53,7 @@
   └─────────────┘
         │
         ▼
-   写入 SQLite ──→ SSE 推送前端 ──→ 渲染行程 + 酒店卡片 + 地图路线
+   写入 PostgreSQL ──→ SSE 推送前端 ──→ 渲染行程 + 酒店卡片 + 地图路线
 ```
 
 ### 各节点数据从哪来
@@ -61,7 +61,7 @@
 | 节点 | 做什么 | 数据来源 | 关键点 |
 |---|---|---|---|
 | **extract** | 从自然语言抽取结构化偏好 | DeepSeek LLM | `temperature=0.0` 追求稳定；解析失败用默认值兜底 |
-| **research** | 搜集目的地攻略素材 | 小红书 MCP（xpzouying/xiaohongshu-mcp） | 先查 SQLite 缓存（7天有效），未命中才实时爬取；目的地名模糊匹配 |
+| **research** | 搜集目的地攻略素材 | 小红书 MCP（xpzouying/xiaohongshu-mcp） | 先查 PostgreSQL 缓存（7天有效），未命中才实时爬取；目的地名模糊匹配 |
 | **plan** | 根据偏好 + 素材生成每日行程 | DeepSeek LLM | `temperature=0.7` 追求多样性；输出含 `plan_days`（景点序列）供交通节点用 |
 | **hotel_search** | 根据住宿建议搜索酒店 | 携程（Chrome CDP 直连爬虫） | 从 `accommodation_area` 提取关键词 → 携程搜索 → 按性价比排序取前2个 |
 | **transport** | 查真实交通并注入行程 | 高德地图 Web API | 城际交通 + 逐天市内交通；<2km 步行，否则对比驾车/地铁耗时 |
@@ -203,7 +203,7 @@ backend/
     main.py              # FastAPI 入口 + CORS + 启动建表 + 轻量迁移 + 北京时间日志
     config.py            # pydantic-settings 从 .env 读配置
     schemas.py           # 接口入参/出参 Pydantic 模型（与前端 types/index.ts 对齐）
-    database.py          # SQLite 引擎 + SessionLocal + get_db 依赖
+    database.py          # PostgreSQL 引擎 + SessionLocal + get_db 依赖
     models.py            # 5 张表：Trip / UserProfile / XhsNoteCache / CtripCityCache / CtripHotelCache
     agent/
       state.py           # AgentState（TypedDict）—— 节点间共享数据的唯一通道
@@ -250,6 +250,7 @@ docs/
 
 - Python 3.11+
 - Node 18+
+- PostgreSQL 16+（本地开发需安装并启动服务）
 - （可选）Chrome 带 `--remote-debugging-port=9222`（携程酒店爬虫需要）
 
 ### 你需要准备的
@@ -258,6 +259,7 @@ docs/
 |---|---|---|
 | `DEEPSEEK_API_KEY` | ✅ | [platform.deepseek.com](https://platform.deepseek.com)，按量付费 |
 | `AMAP_WEB_KEY` | ✅ | [高德开放平台](https://console.amap.com/dev/key/app)，服务平台选 **Web服务** |
+| PostgreSQL 数据库 | ✅ | 本地安装 PostgreSQL 16+，创建 `travel_planner` 数据库 |
 | `XHS_MCP_URL` | ❌ | 自建 [xiaohongshu-mcp](https://github.com/xpzouying/xiaohongshu-mcp)，不配则跳过小红书采集 |
 | `CHROME_DEBUG_URL` | ❌ | `http://127.0.0.1:9222`，不配则跳过携程酒店搜索 |
 
@@ -266,13 +268,23 @@ docs/
 ### 启动后端
 
 ```bash
+# 1. 安装 PostgreSQL（如未安装）
+# Windows: winget install PostgreSQL.PostgreSQL.16
+# macOS: brew install postgresql@16
+# Ubuntu: sudo apt install postgresql postgresql-contrib
+
+# 2. 创建数据库和用户
+psql -U postgres -c "CREATE USER travel WITH PASSWORD 'travel2026';"
+psql -U postgres -c "CREATE DATABASE travel_planner OWNER travel;"
+
+# 3. 启动后端
 cd backend
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
 
 pip install -r requirements.txt
-cp .env.example .env    # 填入 DEEPSEEK_API_KEY
+cp .env.example .env    # 填入 DEEPSEEK_API_KEY 和 DATABASE_URL
 
 uvicorn app.main:app --reload
 ```
@@ -325,24 +337,34 @@ google-chrome --remote-debugging-port=9222
 
 ## 部署
 
-线上部署在 Docker Compose，包含三个容器：
+线上部署在 Docker Compose，PostgreSQL 安装在宿主机上：
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│  docker-compose                                              │
+│  宿主机 (Ubuntu)                                              │
 │                                                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │  chrome       │  │  backend     │  │  frontend    │       │
-│  │  (headless)   │←─│  (FastAPI)   │  │  (nginx)     │       │
-│  │  :9223 CDP    │  │  :8000       │  │  :80         │       │
-│  └──────────────┘  └──────────────┘  └──────────────┘       │
-│         ↑                  │                                  │
-│         └── network_mode: host（共享网络，直连 localhost）      │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  PostgreSQL 16                                        │   │
+│  │  :5432 (localhost only)                               │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                          ↓                                   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  docker-compose                                       │   │
+│  │                                                      │   │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌────────────┐ │   │
+│  │  │  chrome       │  │  backend     │  │  frontend  │ │   │
+│  │  │  (headless)   │←─│  (FastAPI)   │  │  (nginx)   │ │   │
+│  │  │  :9223 CDP    │  │  :8000       │  │  :80       │ │   │
+│  │  └──────────────┘  └──────────────┘  └────────────┘ │   │
+│  │         ↑                  │                          │   │
+│  │         └── network_mode: service:chrome（共享网络）    │   │
+│  └──────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────┘
 ```
 
+- **PostgreSQL**：宿主机安装，监听 `localhost:5432`，Docker 容器通过 `host.docker.internal` 访问
 - **Chrome 容器**：常驻 headless Chrome，绑定 `127.0.0.1:9223`
-- **Backend 容器**：`network_mode: host`，直连 Chrome 的 CDP 端口
+- **Backend 容器**：`network_mode: service:chrome`，共享 Chrome 网络，通过 `host.docker.internal` 连接宿主机 PostgreSQL
 - **Frontend 容器**：nginx 托管构建产物，反代 `/api` 到后端
 
 详细部署步骤见 [deploy/部署更新文档.md](deploy/部署更新文档.md)。

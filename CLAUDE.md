@@ -10,7 +10,7 @@
 | 后端 | Python + FastAPI + Pydantic + SQLAlchemy |
 | Agent 编排 | LangChain + LangGraph（抽取 → 搜集 → 生成 → 酒店搜索 → 交通五步 DAG） |
 | LLM | DeepSeek（`deepseek-v4-flash`） |
-| 存储 | SQLite（`backend/trips.db`，启动时自动建表） |
+| 存储 | PostgreSQL 16（本地 `localhost:5432`，线上 Docker 宿主机安装，启动时自动建表） |
 | 数据源 | 预置目的地数据 + 小红书攻略（MCP 协议，含缓存） + 携程酒店（Chrome CDP 直连爬虫） + 高德地图（交通规划） |
 
 ## 目录结构
@@ -21,7 +21,7 @@ backend/
     main.py              # FastAPI 入口 + CORS + 启动建表 + 日志配置
     config.py            # 环境变量配置（pydantic-settings，读 .env）
     schemas.py           # 接口入参/出参 + 数据结构 Pydantic 模型
-    database.py          # SQLite 引擎 + SessionLocal + get_db 依赖
+    database.py          # PostgreSQL 引擎 + SessionLocal + get_db 依赖
     models.py            # Trip / UserProfile / XhsNoteCache / CtripCityCache / CtripHotelCache ORM 模型
     agent/
       state.py           # AgentState 状态定义（跨节点共享数据）
@@ -76,7 +76,7 @@ docs/交通规划.md                    # 交通规划逻辑（城际/市内/注
   → agent_graph.astream(state, stream_mode=["updates", "custom"])
   → 每完成一个节点 → SSE 推送 stage 事件
   → research 节点内 → SSE 推送 xhs_note 事件（小红书逐篇）
-  → 全部完成 → Trip 落库 SQLite → SSE 推送 done 事件（含完整 Trip）
+  → 全部完成 → Trip 落库 PostgreSQL → SSE 推送 done 事件（含完整 Trip）
 
 [前端] store.current = done 事件里的 Trip
   → ItineraryView.vue 渲染行程，ResearchPanel.vue 渲染素材
@@ -161,7 +161,7 @@ POST /api/generate  { user_input: "太累了，节奏放慢点", trip_id: 5 }
 
 - `main.py`：创建 FastAPI 实例，`Base.metadata.create_all()` 启动建表 + 轻量迁移（`ALTER TABLE ADD COLUMN`），配置 CORS（放行 5173 / 3000 / 线上 IP），挂载 `trips.router`，`/health` 健康检查。**日志配置**：`colorlog` 带颜色输出，`level=logging.INFO`，第三方库（httpcore/httpx/http11）自动调到 WARNING。
 - `config.py`：`Settings`（pydantic-settings）从 `.env` 读 `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL` / `DATABASE_URL` / `AMAP_WEB_KEY` / `XHS_MCP_URL` / `CHROME_DEBUG_URL` / `CTRIPE_MCP_URL` 等。
-- `database.py`：SQLite 需要 `check_same_thread=False` 才能在 FastAPI 线程池复用；`get_db()` 是请求级会话依赖。
+- `database.py`：PostgreSQL 引擎创建（自动检测 `DATABASE_URL` 前缀，SQLite 时加 `check_same_thread=False`）；`get_db()` 是请求级会话依赖。
 - `models.py`：5 张表 —— `Trip`（行程，含 `usage`/`transit`/`hotels`/`chat_history`/`parent_id` JSON 列）、`UserProfile`（记住出发地）、`XhsNoteCache`（小红书缓存）、`CtripCityCache`（携程城市 ID 缓存，365天）、`CtripHotelCache`（携程酒店缓存，3天）。
 - `nodes.py`：五个节点函数 + `_parse_json()` 稳健解析 + `_get_llm()` 统一创建实例 + `_strip_injected_blocks()` 清理注入内容。
 - `graph.py`：组装 LangGraph DAG，含 `_route_after_extract()` 条件分支（修改模式跳过 research）。
@@ -245,25 +245,48 @@ google-chrome --remote-debugging-port=9222
 - **携程酒店爬虫**：`hotel_search` 节点从 `accommodation_area` 提取关键词（如"乐桥站"），通过 Chrome CDP 直连爬取携程。流程：① 调携程 API 获取城市 ID（`getHotelKeywords`，缓存 365 天）→ ② 拼 URL 直接导航到搜索结果页 → ③ JS 直读 DOM 提取酒店卡片。按性价比排序取前2个注入行程。**前提**：需要启动带 `--remote-debugging-port=9222` 的 Chrome（线上通过 Docker 共享网络）。**缓存机制**：城市 ID 缓存 365 天，酒店结果缓存 3 天。
 - **日志级别约定**：业务日志统一用 `logger.info` 或 `logger.warning`，不要用 `logger.debug`。`main.py` 已配置 `colorlog` 带颜色输出 + `level=logging.INFO`，第三方库（httpcore/httpx/http11）自动调到 WARNING，无需手动处理。
 
-### 直接操作 SQLite 数据库
+### 直接操作 PostgreSQL 数据库
 
-系统无 `sqlite3` 命令行工具，用 Python 操作：
+本地开发时，可用 `psql` 命令行工具操作：
 
 ```bash
-cd backend
-python -c "
-import sqlite3
-conn = sqlite3.connect('trips.db')
-c = conn.cursor()
-c.execute('SELECT id, substr(user_input, 1, 50) FROM trips')  # 查看
-c.execute('DELETE FROM trips WHERE id BETWEEN 18 AND 23')      # 删除
-conn.commit()
+# 连接数据库（本地）
+psql -U travel -h localhost -d travel_planner
+
+# 常用命令
+\dt                              # 列出所有表
+\d trips                         # 查看 trips 表结构
+SELECT id, substr(user_input, 1, 50) FROM trips;  # 查看行程
+DELETE FROM trips WHERE id BETWEEN 18 AND 23;      # 删除行程
+```
+
+- 连接信息：`postgresql://travel:travel2026@localhost:5432/travel_planner`
+- 主表：`trips`（行程）、`xhs_note_cache`（小红书缓存）、`ctrip_hotel_cache`（携程酒店缓存）、`ctrip_city_cache`（携程城市 ID 缓存）、`user_profile`（用户偏好）
+
+#### 线上数据库操作
+
+```bash
+# SSH 到服务器
+ssh ubuntu@118.89.71.196
+
+# 连接 PostgreSQL
+sudo -u postgres psql -d travel_planner
+
+# 或用容器内 psql
+sudo docker exec -it travel-backend python -c "
+import psycopg2
+conn = psycopg2.connect('postgresql://travel:travel2026@host.docker.internal:5432/travel_planner')
+cur = conn.cursor()
+cur.execute('SELECT id, substr(user_input, 1, 50) FROM trips')
+for row in cur.fetchall():
+    print(row)
 conn.close()
 "
 ```
 
-- 路径：`backend/trips.db`
-- 主表：`trips`（行程）、`xhs_note_cache`（小红书缓存）、`ctrip_hotel_cache`（携程酒店缓存）、`ctrip_city_cache`（携程城市 ID 缓存）、`user_profiles`（用户偏好）
+#### 数据迁移（SQLite → PostgreSQL）
+
+如需从旧的 SQLite 迁移数据，参考 `deploy/migrate_sqlite_to_pg.py` 脚本。
 
 ## 踩坑记录
 
