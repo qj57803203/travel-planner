@@ -490,12 +490,14 @@ async def _collect_within_budget(
                     if len(det["desc"]) < 100:  # 太短的笔记（纯图/广告位）不当来源，但不计故障
                         logger.info("    跳过：正文过短（%d 字，纯图/广告位）", len(det["desc"]))
                         continue
+                    cover_url = det.get("cover") or f.get("cover") or ""
                     note = {
                         "title": f"小红书｜{det['title'][:40]}",
                         "url": note_url(f["feed_id"]),
                         "summary": det["desc"][:1500],  # 笔记细节是攻略质量原料，给足；截断控 token
-                        "cover": det.get("cover") or f.get("cover") or "",
+                        "cover": cover_url,
                     }
+                    logger.info("    cover URL: %s", cover_url[:80] if cover_url else "(空)")
                     out.append(note)
                     logger.info("  已采集第 %d 篇：《%s》", len(out), det["title"][:30])
                     if on_note is not None:

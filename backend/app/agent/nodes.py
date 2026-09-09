@@ -95,6 +95,7 @@ def _stream_writer():
 
 def _emit_xhs_note(writer, index: int, note: dict) -> None:
     """把小红书单篇采集进度推给前端（writer 为 None 时跳过）。"""
+    logger.info("  xhs_note 推送: #%d title=%s, cover=%s", index, note.get("title", "")[:30], note.get("cover", "")[:80])
     if writer is not None:
         writer({"type": "xhs_note", "index": index, **note})
 
@@ -252,10 +253,13 @@ def _load_xhs_cache(destination: str) -> list[dict]:
                 .limit(settings.xhs_notes_per_turn)
                 .all()
             )
-        return [
+        notes = [
             {"title": r.title, "url": r.url, "summary": r.summary, "cover": r.cover}
             for r in rows
         ]
+        for n in notes:
+            logger.info("  缓存笔记: title=%s, cover=%s", n["title"][:30], n["cover"][:80] if n["cover"] else "(空)")
+        return notes
     except Exception:  # noqa: BLE001 — 缓存不可用绝不阻塞主流程
         logger.warning("读取小红书缓存失败：%s", destination, exc_info=True)
         return []

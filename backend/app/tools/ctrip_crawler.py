@@ -371,7 +371,7 @@ async def _crawl_hotels(destination: str, keyword: str, limit: int) -> tuple[lis
         await page.goto("https://www.ctrip.com", wait_until="load", timeout=20000)
         await asyncio.sleep(2)
 
-        # 2. 解析城市 ID（先查缓存，缓存未命中则调携程 API）
+        # 2. 取城市 ID
         city_id = await _resolve_city_id(destination, page=page)
         if not city_id:
             logger.warning("携程城市 ID 解析失败，跳过酒店搜索：%s", destination)

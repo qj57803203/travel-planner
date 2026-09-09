@@ -31,7 +31,7 @@
           target="_blank"
           rel="noopener noreferrer"
         >
-          <img v-if="n.cover" class="xhs-cover" :src="n.cover" alt="" loading="lazy" />
+          <img v-if="n.cover" class="xhs-cover" :src="n.cover" alt="" loading="lazy" referrerpolicy="no-referrer" />
           <div class="xhs-body">
             <h5 class="xhs-title">{{ n.title }}</h5>
             <div class="xhs-summary" v-html="renderMarkdown(n.summary)"></div>

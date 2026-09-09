@@ -28,7 +28,7 @@
         target="_blank"
         rel="noopener noreferrer"
       >
-        <img v-if="n.cover" class="xhs-live-cover" :src="n.cover" alt="" loading="lazy" />
+        <img v-if="n.cover" class="xhs-live-cover" :src="n.cover" alt="" loading="lazy" referrerpolicy="no-referrer" />
         <span class="xhs-live-title">{{ n.title }}</span>
         <Icon name="arrow" :size="14" class="xhs-live-arrow" />
       </a>

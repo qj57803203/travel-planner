@@ -6,7 +6,6 @@
 
 ```text
 前端 → 后端 FastAPI → LangGraph research 节点
-                        ├─ 预置数据（东京/大阪/巴黎，兜底）
                         └─ 小红书 MCP（http://127.0.0.1:18060/mcp，优先）
                             └─ search_feeds → get_feed_detail → 笔记摘要
 ```
